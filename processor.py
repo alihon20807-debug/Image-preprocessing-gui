@@ -56,6 +56,20 @@ def apply_grayscale(img, step):
         return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     return img
 
+def apply_invert(img, step):
+    if not isinstance(img, np.ndarray):
+        raise TypeError(f"img must be a numpy.ndarray. Got {type(img).__name__}")
+    verify_step_base(step)
+    
+    channel_mode = step.get('channel_mode', 'Color Channels')
+    check_one_of(channel_mode, {'Color Channels', 'Grayscale'}, 'channel_mode')
+    
+    if channel_mode == 'Grayscale' and len(img.shape) > 2:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        
+    return cv2.bitwise_not(img)
+
+
 def apply_contrast(img, step):
     if not isinstance(img, np.ndarray):
         raise TypeError(f"img must be a numpy.ndarray. Got {type(img).__name__}")
@@ -533,6 +547,46 @@ def apply_upsample(img, step):
     h, w = img.shape[:2]
     new_w = int(w * scale)
     new_h = int(h * scale)
+    return cv2.resize(img, (new_w, new_h), interpolation=flags)
+
+def apply_downsample(img, step):
+    if not isinstance(img, np.ndarray):
+        raise TypeError(f"img must be a numpy.ndarray. Got {type(img).__name__}")
+    verify_step_base(step)
+    
+    if 'scale' not in step:
+        raise KeyError("Missing required parameter 'scale' for Downsample")
+    if 'interpolation' not in step:
+        raise KeyError("Missing required parameter 'interpolation' for Downsample")
+        
+    if type(step['scale']) not in (int, float):
+        raise TypeError(f"scale must be int or float. Got {type(step['scale']).__name__}")
+    check_type(step['interpolation'], str, 'interpolation')
+    
+    scale = float(step['scale'])
+    interp_name = step['interpolation']
+    
+    if scale <= 0.0 or scale > 1.0:
+        raise ValueError(f"scale must be in range (0.0, 1.0]. Got {scale}")
+        
+    interp_map = {
+        'Bilinear (Fast)': cv2.INTER_LINEAR,
+        'Bicubic (Sharp)': cv2.INTER_CUBIC,
+        'Lanczos (Ultra Sharp)': cv2.INTER_LANCZOS4,
+        'Nearest Neighbor': cv2.INTER_NEAREST
+    }
+    check_one_of(interp_name, set(interp_map.keys()), 'interpolation')
+    
+    if scale == 1.0:
+        return img
+        
+    flags = interp_map[interp_name]
+    
+    h, w = img.shape[:2]
+    new_w = int(w * scale)
+    new_h = int(h * scale)
+    new_w = max(1, new_w)
+    new_h = max(1, new_h)
     return cv2.resize(img, (new_w, new_h), interpolation=flags)
 
 def apply_crop(img, step):
@@ -1243,7 +1297,9 @@ PROCESSING_REGISTRY = {
     'crop': apply_crop,
     'heal': apply_heal,
     'fill': apply_fill,
-    'above_to_white': apply_above_to_white
+    'above_to_white': apply_above_to_white,
+    'invert': apply_invert,
+    'downsample': apply_downsample
 }
 
 # ----------------- Layer Validation & Blending Helpers -----------------
@@ -1270,8 +1326,8 @@ def verify_layer_base(layer):
     if 'disabled' in layer:
         check_type(layer['disabled'], bool, 'layer.disabled')
         
-    if 'invert' in layer:
-        check_type(layer['invert'], bool, 'layer.invert')
+    if 'blend_interpolation' in layer:
+        check_type(layer['blend_interpolation'], str, 'layer.blend_interpolation')
         
     if type(layer['steps']) is not list:
         raise TypeError(f"Layer steps must be a list. Got {type(layer['steps']).__name__}")
@@ -1279,15 +1335,31 @@ def verify_layer_base(layer):
     supported_blend_modes = {'normal', 'add', 'subtract', 'multiply', 'screen', 'difference', 'darken', 'lighten'}
     check_one_of(layer['blend_mode'], supported_blend_modes, 'layer.blend_mode')
 
-def blend_images(target_img, src_img, blend_mode, opacity):
+def blend_images(target_img, src_img, blend_mode, opacity, blend_interp='Bicubic (Sharp)'):
     if not isinstance(target_img, np.ndarray):
         raise TypeError(f"target_img must be a numpy.ndarray. Got {type(target_img).__name__}")
     if not isinstance(src_img, np.ndarray):
         raise TypeError(f"src_img must be a numpy.ndarray. Got {type(src_img).__name__}")
+        
+    supported_interps = {'Bilinear (Fast)', 'Bicubic (Sharp)', 'Lanczos (Ultra Sharp)', 'Nearest Neighbor'}
+    check_one_of(blend_interp, supported_interps, 'blend_interpolation')
     
-    # 1. Unify spatial dimensions (prevent crashes if crops/upsamples differ)
-    if src_img.shape[:2] != target_img.shape[:2]:
-        src_img = cv2.resize(src_img, (target_img.shape[1], target_img.shape[0]))
+    interp_map = {
+        'Bilinear (Fast)': cv2.INTER_LINEAR,
+        'Bicubic (Sharp)': cv2.INTER_CUBIC,
+        'Lanczos (Ultra Sharp)': cv2.INTER_LANCZOS4,
+        'Nearest Neighbor': cv2.INTER_NEAREST
+    }
+    flags = interp_map[blend_interp]
+    
+    # 1. Unify spatial dimensions by scaling the smaller image to the larger image's size (preserving details)
+    h_src, w_src = src_img.shape[:2]
+    h_tgt, w_tgt = target_img.shape[:2]
+    if (w_src, h_src) != (w_tgt, h_tgt):
+        if w_src * h_src > w_tgt * h_tgt:
+            target_img = cv2.resize(target_img, (w_src, h_src), interpolation=flags)
+        else:
+            src_img = cv2.resize(src_img, (w_tgt, h_tgt), interpolation=flags)
     
     # 2. Unify channel depths
     if len(src_img.shape) == 2 and len(target_img.shape) == 3:

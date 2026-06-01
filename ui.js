@@ -8,12 +8,14 @@ export function generateStepId() {
 export function getStepName(type) {
     switch (type) {
         case 'grayscale': return 'Convert to Grayscale';
+        case 'invert': return 'Invert Colors';
         case 'contrast': return 'Contrast & Brightness';
         case 'blur': return 'Gaussian Blur';
         case 'threshold': return 'Thresholding';
         case 'above_to_white': return 'Above to White';
         case 'edges': return 'Edge Detection';
         case 'upsample': return 'Upsampling (Scale Up)';
+        case 'downsample': return 'Downsampling (Scale Down)';
         case 'crop': return 'Crop Region';
         case 'heal': return 'Stroke Healing';
         case 'fill': return 'Fill Region';
@@ -183,12 +185,23 @@ export function createLayerCardElement(layer, index) {
                 </div>
             </div>
             
-            <div class="layer-properties-full">
+            <div class="layer-properties-grid" style="margin-top: 8px;">
                 <div class="control-group">
                     <span class="control-label" style="font-size: 11px;">Blend Target</span>
                     <div class="select-wrapper">
                         <select class="custom-select select-layer-blend-target" style="font-size: 11px; padding: 6px 10px;">
                             ${blendTargetOptions}
+                        </select>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <span class="control-label" style="font-size: 11px;">Blend Upscale Filter</span>
+                    <div class="select-wrapper">
+                        <select class="custom-select select-layer-blend-interp" style="font-size: 11px; padding: 6px 10px;">
+                            <option value="Bilinear (Fast)" ${layer.blend_interpolation === 'Bilinear (Fast)' ? 'selected' : ''}>Bilinear (Fast)</option>
+                            <option value="Bicubic (Sharp)" ${layer.blend_interpolation === 'Bicubic (Sharp)' ? 'selected' : ''}>Bicubic (Sharp)</option>
+                            <option value="Lanczos (Ultra Sharp)" ${layer.blend_interpolation === 'Lanczos (Ultra Sharp)' ? 'selected' : ''}>Lanczos (Ultra Sharp)</option>
+                            <option value="Nearest Neighbor" ${layer.blend_interpolation === 'Nearest Neighbor' ? 'selected' : ''}>Nearest Neighbor</option>
                         </select>
                     </div>
                 </div>
@@ -201,17 +214,6 @@ export function createLayerCardElement(layer, index) {
                     <span class="slider-value value-layer-opacity" style="font-size: 11px;">${layer.opacity}%</span>
                 </div>
                 <input type="range" class="custom-range slider-layer-opacity" min="0" max="100" step="5" value="${layer.opacity}" style="height: 4px;">
-            </div>
-            
-            <!-- Invert Layer Toggle -->
-            <div class="control-group" style="gap: 4px;">
-                <div class="toggle-container">
-                    <span class="control-label" style="font-size: 11px; opacity: 0.9;">Invert Layer Output</span>
-                    <label class="switch">
-                        <input type="checkbox" class="checkbox-layer-invert" ${layer.invert ? 'checked' : ''}>
-                        <span class="slider-switch"></span>
-                    </label>
-                </div>
             </div>
             
             <!-- Transformations List -->
@@ -228,6 +230,7 @@ export function createLayerCardElement(layer, index) {
                 <div class="select-wrapper" style="flex: 1;">
                     <select class="custom-select select-mini-add-step" style="font-size: 11px; padding: 6px 10px;">
                         <option value="grayscale">Convert to Grayscale</option>
+                        <option value="invert">Invert Colors</option>
                         <option value="contrast">Contrast & Brightness</option>
                         <option value="blur">Gaussian Blur</option>
                         <option value="threshold">Thresholding</option>
@@ -235,6 +238,7 @@ export function createLayerCardElement(layer, index) {
                         <option value="edges">Edge Detection</option>
                         <option value="edges_fill">Edge Detection + Fill</option>
                         <option value="upsample">Upsampling (Scale Up)</option>
+                        <option value="downsample">Downsampling (Scale Down)</option>
                         <option value="crop">Crop Region</option>
                         <option value="heal">Stroke Healing</option>
                         <option value="fill">Fill Region</option>
@@ -268,6 +272,19 @@ export function createPipelineCardElement(step, index, layerId) {
     
     if (step.type === 'grayscale') {
         bodyHtml = `<div class="pipeline-card-desc">Converts BGR image channels to a single-channel grayscale matrix.</div>`;
+    } else if (step.type === 'invert') {
+        bodyHtml = `
+            <div class="pipeline-card-desc" style="margin-bottom: 8px;">Inverts the color values of the active channels.</div>
+            <div class="control-group">
+                <span class="control-label">Inversion Mode</span>
+                <div class="select-wrapper">
+                    <select class="custom-select" data-param="channel_mode">
+                        <option value="Color Channels" ${step.channel_mode === 'Color Channels' ? 'selected' : ''}>Color Channels</option>
+                        <option value="Grayscale" ${step.channel_mode === 'Grayscale' ? 'selected' : ''}>Grayscale Mode</option>
+                    </select>
+                </div>
+            </div>
+        `;
     } else if (step.type === 'contrast') {
         bodyHtml = `
             <div class="control-group">
@@ -893,6 +910,27 @@ export function createPipelineCardElement(step, index, layerId) {
                     <span class="slider-value" id="val-upsample-scale-${step.id}">${step.scale.toFixed(1)}x</span>
                 </div>
                 <input type="range" class="custom-range" data-param="scale" min="1.0" max="4.0" step="0.5" value="${step.scale}">
+            </div>
+            <div class="control-group">
+                <span class="control-label">Interpolation</span>
+                <div class="select-wrapper">
+                    <select class="custom-select" data-param="interpolation">
+                        <option value="Bilinear (Fast)" ${step.interpolation === 'Bilinear (Fast)' ? 'selected' : ''}>Bilinear (Fast)</option>
+                        <option value="Bicubic (Sharp)" ${step.interpolation === 'Bicubic (Sharp)' ? 'selected' : ''}>Bicubic (Sharp)</option>
+                        <option value="Lanczos (Ultra Sharp)" ${step.interpolation === 'Lanczos (Ultra Sharp)' ? 'selected' : ''}>Lanczos (Ultra Sharp)</option>
+                        <option value="Nearest Neighbor" ${step.interpolation === 'Nearest Neighbor' ? 'selected' : ''}>Nearest Neighbor</option>
+                    </select>
+                </div>
+            </div>
+        `;
+    } else if (step.type === 'downsample') {
+        bodyHtml = `
+            <div class="control-group">
+                <div class="slider-header">
+                    <span class="control-label">Scale Multiplier</span>
+                    <span class="slider-value" id="val-downsample-scale-${step.id}">${step.scale.toFixed(2)}x</span>
+                </div>
+                <input type="range" class="custom-range" data-param="scale" min="0.1" max="1.0" step="0.05" value="${step.scale}">
             </div>
             <div class="control-group">
                 <span class="control-label">Interpolation</span>

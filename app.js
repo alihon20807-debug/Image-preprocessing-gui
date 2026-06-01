@@ -438,7 +438,11 @@ function setupEventListeners() {
                     newStep.target_color = '#ff0000';
                     newStep.tolerance = 30;
                     newStep.fill_color = '#000000';
-                    newStep.bg_color = '#ffffff';
+                } else if (stepType === 'invert') {
+                    newStep.channel_mode = 'Color Channels';
+                } else if (stepType === 'downsample') {
+                    newStep.scale = 0.5;
+                    newStep.interpolation = 'Bicubic (Sharp)';
                 }
                 
                 if (layer) {
@@ -529,14 +533,52 @@ function setupEventListeners() {
             return;
         }
         
-        // B2. Layer Invert Checkbox
-        if (e.target.classList.contains('checkbox-layer-invert')) {
+        // B3. Layer Select Dropdowns (Input, Blend, Target, Interpolation)
+        if (e.target.classList.contains('select-layer-input')) {
             const layerCard = e.target.closest('.layer-card');
             if (layerCard) {
                 const layerId = layerCard.dataset.id;
                 const layer = state.layers.find(l => l.id === layerId);
                 if (layer) {
-                    layer.invert = e.target.checked;
+                    layer.input_source = e.target.value;
+                    renderLayers();
+                    triggerDebouncedProcess();
+                }
+            }
+            return;
+        }
+        if (e.target.classList.contains('select-layer-blend')) {
+            const layerCard = e.target.closest('.layer-card');
+            if (layerCard) {
+                const layerId = layerCard.dataset.id;
+                const layer = state.layers.find(l => l.id === layerId);
+                if (layer) {
+                    layer.blend_mode = e.target.value;
+                    triggerDebouncedProcess();
+                }
+            }
+            return;
+        }
+        if (e.target.classList.contains('select-layer-blend-target')) {
+            const layerCard = e.target.closest('.layer-card');
+            if (layerCard) {
+                const layerId = layerCard.dataset.id;
+                const layer = state.layers.find(l => l.id === layerId);
+                if (layer) {
+                    layer.blend_target = e.target.value;
+                    renderLayers();
+                    triggerDebouncedProcess();
+                }
+            }
+            return;
+        }
+        if (e.target.classList.contains('select-layer-blend-interp')) {
+            const layerCard = e.target.closest('.layer-card');
+            if (layerCard) {
+                const layerId = layerCard.dataset.id;
+                const layer = state.layers.find(l => l.id === layerId);
+                if (layer) {
+                    layer.blend_interpolation = e.target.value;
                     triggerDebouncedProcess();
                 }
             }
@@ -564,6 +606,31 @@ function setupEventListeners() {
                 triggerDebouncedProcess();
                 return;
             }
+            
+            // Universal Select Dropdowns & Toggles updater
+            const genericParams = [
+                'mode', 'blur_type', 'algorithm', 'condition', 'operation', 
+                'fill_mode', 'use_target_color', 'foreground_mode', 'fill_target', 
+                'draw_style', 'l2_gradient', 'dx', 'dy', 'ksize', 'aperture', 
+                'interpolation', 'channel_mode'
+            ];
+            if (genericParams.includes(param)) {
+                // Parse boolean/number inputs where necessary
+                let parsedVal = val;
+                if (val === 'true') parsedVal = true;
+                else if (val === 'false') parsedVal = false;
+                else if (param === 'ksize' || param === 'aperture' || param === 'dx' || param === 'dy') parsedVal = parseInt(val);
+                
+                step[param] = parsedVal;
+                
+                // Triggers that require structural card visibility / re-render changes
+                if (['mode', 'blur_type', 'algorithm', 'condition', 'operation', 'fill_mode', 'use_target_color', 'foreground_mode', 'fill_target', 'draw_style'].includes(param)) {
+                    renderLayers();
+                }
+                triggerDebouncedProcess();
+                return;
+            }
+            
             if (step.type === 'contrast') {
                 if (param === 'contrast') {
                     step.contrast = parseFloat(val);
@@ -755,6 +822,12 @@ function setupEventListeners() {
                     const el = document.getElementById(`val-upsample-scale-${id}`);
                     if (el) el.textContent = `${step.scale.toFixed(1)}x`;
                 }
+            } else if (step.type === 'downsample') {
+                if (param === 'scale') {
+                    step.scale = parseFloat(val);
+                    const el = document.getElementById(`val-downsample-scale-${id}`);
+                    if (el) el.textContent = `${step.scale.toFixed(2)}x`;
+                }
             } else if (step.type === 'crop') {
                 if (param === 'left') {
                     step.left = parseInt(val);
@@ -800,6 +873,31 @@ function setupEventListeners() {
     if (closeErrorBtn) {
         closeErrorBtn.addEventListener('click', hidePipelineErrorOverlay);
     }
+    
+    // --- Keyboard Shortcuts for Comparison Modes ---
+    window.addEventListener('keydown', (e) => {
+        // Ignore shortcut if user is typing in inputs or editable elements
+        const activeEl = document.activeElement;
+        if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable)) {
+            return;
+        }
+        
+        const modeKeys = {
+            '1': 'Split Slider',
+            '2': 'Overlay Opacity',
+            '3': 'Pixel Difference',
+            '4': 'X-Ray Lens'
+        };
+        
+        if (modeKeys[e.key]) {
+            e.preventDefault();
+            const chosenMode = modeKeys[e.key];
+            if (elements.compModeSelect && elements.compModeSelect.value !== chosenMode) {
+                elements.compModeSelect.value = chosenMode;
+                elements.compModeSelect.dispatchEvent(new Event('change'));
+            }
+        }
+    });
     
     // Initial layers stack rendering on load
     renderLayers();

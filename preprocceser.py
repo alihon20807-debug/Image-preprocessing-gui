@@ -1,7 +1,4 @@
 from flask import Flask, request, jsonify
-import webbrowser
-import threading
-import socket
 import base64
 import cv2
 import numpy as np
@@ -217,17 +214,6 @@ def process():
             if comparison_baseline == step_id:
                 baseline_img = processed_layer.copy()
                 baseline_captured = True
-                
-        # Apply layer-level inversion if enabled
-        invert_enabled = layer.get('invert', False)
-        if invert_enabled:
-            invert_cache_key = (current_key, "invert", True)
-            if invert_cache_key in _pipeline_cache:
-                processed_layer = _pipeline_cache[invert_cache_key].copy()
-            else:
-                processed_layer = cv2.bitwise_not(processed_layer)
-                _pipeline_cache[invert_cache_key] = processed_layer.copy()
-            current_key = invert_cache_key
             
         # Resolve Layer Blending
         blend_target_src = layer['blend_target']
@@ -247,12 +233,13 @@ def process():
         # Perform Blend
         blend_mode = layer['blend_mode']
         opacity = layer['opacity']
+        blend_interp = layer.get('blend_interpolation', 'Bicubic (Sharp)')
         
-        blend_cache_key = (target_key, current_key, blend_mode, opacity)
+        blend_cache_key = (target_key, current_key, blend_mode, opacity, blend_interp)
         if blend_cache_key in _pipeline_cache:
             blended_layer_result = _pipeline_cache[blend_cache_key].copy()
         else:
-            blended_layer_result = blend_images(target_img, processed_layer, blend_mode, opacity)
+            blended_layer_result = blend_images(target_img, processed_layer, blend_mode, opacity, blend_interp)
             _pipeline_cache[blend_cache_key] = blended_layer_result.copy()
         
         # Update accumulated and layer output maps

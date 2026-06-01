@@ -31,8 +31,8 @@ export function createDefaultLayer(name = "New Layer") {
         input_source: 'previous', // 'previous', 'original', or layerId
         blend_mode: 'normal',
         blend_target: 'previous',
+        blend_interpolation: 'Bicubic (Sharp)',
         opacity: 100,
-        invert: false,
         isExpanded: true,
         steps: []
     };

@@ -42,7 +42,7 @@ body {
 /* Master Container Grid */
 .app-container {
     display: grid;
-    grid-template-columns: 340px 1fr;
+    grid-template-columns: 380px 1fr;
     height: 100vh;
     width: 100vw;
 }
@@ -928,6 +928,10 @@ input:checked + .slider-switch:before {
     display: flex;
     flex-direction: column;
     gap: 16px;
+    margin-top: 12px;
+}
+
+#add-layer-btn {
     margin-top: 12px;
 }
 
