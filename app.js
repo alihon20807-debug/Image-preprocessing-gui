@@ -28,6 +28,7 @@ function createDefaultLayer(name = "New Layer") {
         blend_mode: 'normal',
         blend_target: 'previous',
         opacity: 100,
+        invert: false,
         isExpanded: true,
         steps: []
     };

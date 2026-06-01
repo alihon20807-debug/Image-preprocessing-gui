@@ -1292,6 +1292,9 @@ def verify_layer_base(layer):
     if 'disabled' in layer:
         check_type(layer['disabled'], bool, 'layer.disabled')
         
+    if 'invert' in layer:
+        check_type(layer['invert'], bool, 'layer.invert')
+        
     if type(layer['steps']) is not list:
         raise TypeError(f"Layer steps must be a list. Got {type(layer['steps']).__name__}")
         
@@ -1476,6 +1479,10 @@ def process():
                 baseline_img = processed_layer.copy()
                 baseline_captured = True
                 
+        # Apply layer-level inversion if enabled
+        if layer.get('invert', False):
+            processed_layer = cv2.bitwise_not(processed_layer)
+            
         # Resolve Layer Blending
         blend_target_src = layer['blend_target']
         if blend_target_src == 'previous':
