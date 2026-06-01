@@ -896,6 +896,19 @@ function setupEventListeners() {
                 elements.compModeSelect.value = chosenMode;
                 elements.compModeSelect.dispatchEvent(new Event('change'));
             }
+        } else if (e.key === '[' || e.key === ']') {
+            e.preventDefault();
+            const targetPos = e.key === '[' ? 0 : 100;
+            state.compPosition = targetPos;
+            if (elements.compSlider) {
+                elements.compSlider.value = targetPos;
+                if (state.comparisonMode === "X-Ray Lens") {
+                    elements.compSliderVal.textContent = `${Math.round(targetPos * 2.5 + 40)}px`;
+                } else {
+                    elements.compSliderVal.textContent = `${targetPos}%`;
+                }
+            }
+            updateComparisonView();
         }
     });
     

@@ -326,7 +326,7 @@ def apply_threshold(img, step):
         if channel_mode == 'Grayscale':
             gray_target = int(0.299 * tr + 0.587 * tg + 0.114 * tb)
             gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) > 2 else img
-            dist = cv2.absdiff(gray_img, np.uint8(gray_target))
+            dist = cv2.absdiff(gray_img, gray_target)
             match_mask = dist <= tolerance
             
             gray_val = int(0.299 * r + 0.587 * g + 0.114 * b)
@@ -352,7 +352,7 @@ def apply_threshold(img, step):
             else:
                 # Single-channel grayscale input image (shape is 2D)
                 gray_target = int(0.299 * tr + 0.587 * tg + 0.114 * tb)
-                dist = cv2.absdiff(img, np.uint8(gray_target))
+                dist = cv2.absdiff(img, gray_target)
                 match_mask = dist <= tolerance
                 
                 gray_val = int(0.299 * r + 0.587 * g + 0.114 * b)
@@ -700,7 +700,7 @@ def apply_heal(img, step):
         if channel_mode == 'Grayscale' or not is_color:
             gray_target = int(0.299 * tr + 0.587 * tg + 0.114 * tb)
             gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if is_color else img
-            dist = cv2.absdiff(gray_img, np.uint8(gray_target))
+            dist = cv2.absdiff(gray_img, gray_target)
             match_mask = dist <= tolerance
         else:
             # Color Channels
@@ -976,7 +976,7 @@ def apply_fill(img, step):
         if channel_mode == 'Grayscale' or not is_color:
             gray_target = int(0.299 * tr + 0.587 * tg + 0.114 * tb)
             gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if is_color else img
-            dist = cv2.absdiff(gray_img, np.uint8(gray_target))
+            dist = cv2.absdiff(gray_img, gray_target)
             match_mask = dist <= tolerance
         else:
             # Compute 3D Euclidean distance in BGR space
