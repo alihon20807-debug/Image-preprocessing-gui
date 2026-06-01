@@ -5,6 +5,8 @@ export function autoFitImage() {
     if (state.originalWidth === 0) return;
     
     const container = document.getElementById('comparison-view-container');
+    if (!container || container.clientWidth === 0 || container.clientHeight === 0) return;
+    
     const cWidth = container.clientWidth;
     const cHeight = container.clientHeight;
     

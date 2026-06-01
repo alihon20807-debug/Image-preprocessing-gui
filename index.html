@@ -9,11 +9,112 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" type="text/css" href="litegraph.css">
+    <script type="text/javascript" src="litegraph.min.js"></script>
+    <script>
+        function showVisualError(title, content) {
+            let container = document.getElementById('debug-error-container');
+            if (!container) {
+                container = document.createElement('div');
+                container.id = 'debug-error-container';
+                container.style.position = 'fixed';
+                container.style.bottom = '20px';
+                container.style.left = '20px';
+                container.style.display = 'flex';
+                container.style.flexDirection = 'column';
+                container.style.gap = '10px';
+                container.style.zIndex = '999999';
+                container.style.maxWidth = '450px';
+                document.body.appendChild(container);
+            }
+            
+            const card = document.createElement('div');
+            card.style.background = 'rgba(28, 12, 12, 0.95)';
+            card.style.backdropFilter = 'blur(10px)';
+            card.style.border = '1px solid rgba(239, 68, 68, 0.25)';
+            card.style.borderRadius = '10px';
+            card.style.padding = '12px 16px';
+            card.style.color = '#fecaca';
+            card.style.fontSize = '12px';
+            card.style.fontFamily = 'monospace';
+            card.style.boxShadow = '0 8px 32px rgba(0, 0, 0, 0.35)';
+            card.style.display = 'flex';
+            card.style.flexDirection = 'column';
+            card.style.position = 'relative';
+            card.style.animation = 'slideInError 0.25s ease-out forwards';
+            
+            if (!document.getElementById('debug-error-style')) {
+                const style = document.createElement('style');
+                style.id = 'debug-error-style';
+                style.innerHTML = `
+                    @keyframes slideInError {
+                        from { transform: translateY(20px); opacity: 0; }
+                        to { transform: translateY(0); opacity: 1; }
+                    }
+                `;
+                document.head.appendChild(style);
+            }
+
+            const header = document.createElement('div');
+            header.style.display = 'flex';
+            header.style.justifyContent = 'space-between';
+            header.style.alignItems = 'center';
+            header.style.marginBottom = '6px';
+            header.style.fontWeight = 'bold';
+            header.style.color = '#ef4444';
+            header.innerHTML = '<span>' + title + '</span>';
+
+            const closeBtn = document.createElement('button');
+            closeBtn.innerHTML = '✕';
+            closeBtn.style.background = 'none';
+            closeBtn.style.border = 'none';
+            closeBtn.style.color = '#fca5a5';
+            closeBtn.style.cursor = 'pointer';
+            closeBtn.style.fontSize = '12px';
+            closeBtn.style.padding = '0 4px';
+            closeBtn.addEventListener('click', () => {
+                card.remove();
+                if (container.children.length === 0) {
+                    container.remove();
+                }
+            });
+            header.appendChild(closeBtn);
+
+            const body = document.createElement('div');
+            body.style.maxHeight = '120px';
+            body.style.overflow = 'auto';
+            body.style.whiteSpace = 'pre-wrap';
+            body.style.wordBreak = 'break-all';
+            body.style.opacity = '0.9';
+            body.innerHTML = content;
+
+            card.appendChild(header);
+            card.appendChild(body);
+            container.appendChild(card);
+            
+            setTimeout(() => {
+                if (card.parentNode) {
+                    card.remove();
+                    if (container.children.length === 0) {
+                        container.remove();
+                    }
+                }
+            }, 8000);
+        }
+
+        window.onerror = function(message, source, lineno, colno, error) {
+            showVisualError('⚠️ Runtime Exception', message + '<br><small style="opacity: 0.7;">at ' + source + ':' + lineno + '</small>');
+            return false;
+        };
+        window.onunhandledrejection = function(event) {
+            showVisualError('⚠️ Promise Rejection', event.reason);
+        };
+    </script>
 </head>
 <body>
     <div class="app-container">
         <!-- Sidebar Navigation & Controls -->
-        <aside class="sidebar">
+        <aside class="sidebar" id="sidebar-panel">
             <div class="sidebar-header">
                 <span class="studio-logo">🎨</span>
                 <div>
@@ -100,12 +201,39 @@
             </div>
         </aside>
 
+        <!-- Node Canvas Workspace -->
+        <div class="node-workspace hidden" id="node-workspace-panel">
+            <div class="node-canvas-header">
+                <div class="node-header-title">
+                    <h3>🔌 Node Flow Editor</h3>
+                    <p>Double-click canvas to search • Right-click to add nodes • Drag to connect</p>
+                </div>
+                <div class="node-queue-panel">
+                    <label class="toggle-container" style="gap: 8px; margin-right: 12px; display: inline-flex; width: auto;">
+                        <span class="control-label" style="font-size: 11px;">Auto-Queue</span>
+                        <div class="switch">
+                            <input type="checkbox" id="node-auto-queue" checked>
+                            <span class="slider-switch"></span>
+                        </div>
+                    </label>
+                    <button id="btn-queue-graph" class="btn btn-primary" style="font-size: 11px; padding: 6px 12px; height: 32px; width: auto;">🚀 Queue Graph</button>
+                </div>
+            </div>
+            <div class="node-canvas-body">
+                <canvas id="node-canvas"></canvas>
+            </div>
+        </div>
+
         <!-- Main Display Area -->
         <main class="main-workspace">
             <header class="workspace-header">
                 <div class="header-titles">
                     <h2>Interactive Preprocessing Canvas</h2>
                     <p>Scroll to Zoom (centered on cursor) • Click and Drag to Pan • Hover to Inspect Pixels</p>
+                </div>
+                <div class="mode-toggle-group">
+                    <button id="btn-studio-mode" class="toggle-tab active">🎛️ Layer Studio</button>
+                    <button id="btn-node-mode" class="toggle-tab">🔌 Node Flow</button>
                 </div>
             </header>
 

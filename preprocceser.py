@@ -302,7 +302,7 @@ def process():
 # ----------------- Server Booting -----------------
 
 if __name__ == "__main__":
-    port = 5000
+    port = 5001
     
     print("\n[SUCCESS] Local Flask Preprocessing Server started successfully!")
     print(f" -> Local URL: http://localhost:{port}/index.html")
