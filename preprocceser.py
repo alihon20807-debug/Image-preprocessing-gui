@@ -1,0 +1,1001 @@
+from flask import Flask, request, jsonify
+import webbrowser
+import threading
+import socket
+import base64
+import cv2
+import numpy as np
+import os
+import sys
+import logging
+
+# Initialize Flask with current directory as the static file source
+app = Flask(__name__, static_folder='.', static_url_path='')
+
+# Silence standard Werkzeug console logs for a clean console output
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
+
+DIRECTORY = os.path.dirname(os.path.abspath(__file__))
+
+# ----------------- OpenCV Modular Processing Functions (Registry Pattern) -----------------
+
+# ----------------- OpenCV Modular Processing Functions (Registry Pattern) -----------------
+
+def check_type(val, expected_type, name):
+    if type(val) is not expected_type:
+        raise TypeError(f"Strict Type Violation: '{name}' must be exactly {expected_type.__name__}. Got {type(val).__name__}")
+
+def check_one_of(val, allowed_set, name):
+    if val not in allowed_set:
+        raise ValueError(f"Value Violation: '{name}' must be one of {allowed_set}. Got '{val}'")
+
+def check_range(val, min_val, max_val, name):
+    if val < min_val or val > max_val:
+        raise ValueError(f"Out of Bounds: '{name}' must be in range [{min_val}, {max_val}]. Got {val}")
+
+def check_odd_positive(val, name, min_val=1):
+    check_type(val, int, name)
+    if val < min_val or val % 2 == 0:
+        raise ValueError(f"Constraint Violation: '{name}' must be a positive odd integer >= {min_val}. Got {val}")
+
+def verify_step_base(step):
+    if type(step) is not dict:
+        raise TypeError(f"Pipeline step must be a dict. Got {type(step).__name__}")
+    
+    # Check id
+    if 'id' not in step:
+        raise KeyError("Missing mandatory structural key: 'id'")
+    check_type(step['id'], str, 'id')
+    
+    # Check type
+    if 'type' not in step:
+        raise KeyError("Missing mandatory structural key: 'type'")
+    check_type(step['type'], str, 'type')
+    
+    # Check disabled (optional, but if present must be bool)
+    if 'disabled' in step:
+        check_type(step['disabled'], bool, 'disabled')
+        
+    # Check strength (optional, but if present must be float/int between 0 and 100)
+    if 'strength' in step:
+        if type(step['strength']) not in (int, float):
+            raise TypeError(f"Strict Type Violation: step['strength'] must be exactly int or float. Got {type(step['strength']).__name__}")
+        if not (0.0 <= float(step['strength']) <= 100.0):
+            raise ValueError(f"Out of Bounds: 'strength' must be in range [0.0, 100.0]. Got {step['strength']}")
+
+def apply_grayscale(img, step):
+    if not isinstance(img, np.ndarray):
+        raise TypeError(f"img must be a numpy.ndarray. Got {type(img).__name__}")
+    verify_step_base(step)
+    if len(img.shape) > 2:
+        return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    return img
+
+def apply_contrast(img, step):
+    if not isinstance(img, np.ndarray):
+        raise TypeError(f"img must be a numpy.ndarray. Got {type(img).__name__}")
+    verify_step_base(step)
+    
+    if 'contrast' not in step:
+        raise KeyError("Missing required parameter 'contrast'")
+    check_type(step['contrast'], float, 'contrast')
+    contrast = step['contrast']
+    
+    if 'brightness' not in step:
+        raise KeyError("Missing required parameter 'brightness'")
+    check_type(step['brightness'], int, 'brightness')
+    brightness = step['brightness']
+    
+    return cv2.convertScaleAbs(img, alpha=contrast, beta=brightness)
+
+def apply_blur(img, step):
+    if not isinstance(img, np.ndarray):
+        raise TypeError(f"img must be a numpy.ndarray. Got {type(img).__name__}")
+    verify_step_base(step)
+    
+    if 'blur_type' not in step:
+        raise KeyError("Missing required parameter 'blur_type'")
+    check_type(step['blur_type'], str, 'blur_type')
+    blur_type = step['blur_type']
+    check_one_of(blur_type, {'Gaussian Blur', 'Median Blur', 'Bilateral Filter', 'Box Blur'}, 'blur_type')
+    
+    if blur_type == 'Gaussian Blur':
+        if 'kernel_x' not in step: raise KeyError("Missing 'kernel_x' for Gaussian Blur")
+        if 'kernel_y' not in step: raise KeyError("Missing 'kernel_y' for Gaussian Blur")
+        if 'sigma_x' not in step: raise KeyError("Missing 'sigma_x' for Gaussian Blur")
+        if 'sigma_y' not in step: raise KeyError("Missing 'sigma_y' for Gaussian Blur")
+        
+        check_odd_positive(step['kernel_x'], 'kernel_x')
+        check_odd_positive(step['kernel_y'], 'kernel_y')
+        if type(step['sigma_x']) not in (int, float):
+            raise TypeError(f"sigma_x must be int or float. Got {type(step['sigma_x']).__name__}")
+        if type(step['sigma_y']) not in (int, float):
+            raise TypeError(f"sigma_y must be int or float. Got {type(step['sigma_y']).__name__}")
+            
+        kx = step['kernel_x']
+        ky = step['kernel_y']
+        sx = float(step['sigma_x'])
+        sy = float(step['sigma_y'])
+        
+        if sx < 0.0 or sy < 0.0:
+            raise ValueError(f"sigma_x and sigma_y must be non-negative. Got sx={sx}, sy={sy}")
+            
+        return cv2.GaussianBlur(img, (kx, ky), sigmaX=sx, sigmaY=sy)
+        
+    elif blur_type == 'Median Blur':
+        if 'kernel' not in step: raise KeyError("Missing 'kernel' for Median Blur")
+        check_odd_positive(step['kernel'], 'kernel', min_val=3)
+        kernel = step['kernel']
+        
+        return cv2.medianBlur(img, kernel)
+        
+    elif blur_type == 'Bilateral Filter':
+        if 'diameter' not in step: raise KeyError("Missing 'diameter' for Bilateral Filter")
+        if 'sigma_color' not in step: raise KeyError("Missing 'sigma_color' for Bilateral Filter")
+        if 'sigma_space' not in step: raise KeyError("Missing 'sigma_space' for Bilateral Filter")
+        
+        check_type(step['diameter'], int, 'diameter')
+        if step['diameter'] <= 0:
+            raise ValueError(f"diameter must be a positive integer. Got {step['diameter']}")
+            
+        if type(step['sigma_color']) not in (int, float):
+            raise TypeError(f"sigma_color must be int or float. Got {type(step['sigma_color']).__name__}")
+        if type(step['sigma_space']) not in (int, float):
+            raise TypeError(f"sigma_space must be int or float. Got {type(step['sigma_space']).__name__}")
+            
+        diameter = step['diameter']
+        sigma_color = float(step['sigma_color'])
+        sigma_space = float(step['sigma_space'])
+        
+        if sigma_color <= 0.0 or sigma_space <= 0.0:
+            raise ValueError("sigma_color and sigma_space must be > 0")
+            
+        return cv2.bilateralFilter(img, diameter, sigma_color, sigma_space)
+        
+    elif blur_type == 'Box Blur':
+        if 'kernel_x' not in step: raise KeyError("Missing 'kernel_x' for Box Blur")
+        if 'kernel_y' not in step: raise KeyError("Missing 'kernel_y' for Box Blur")
+        
+        check_type(step['kernel_x'], int, 'kernel_x')
+        check_type(step['kernel_y'], int, 'kernel_y')
+        
+        kx = step['kernel_x']
+        ky = step['kernel_y']
+        
+        if kx <= 0 or ky <= 0:
+            raise ValueError(f"Box Blur kernels must be positive integers. Got ({kx}, {ky})")
+            
+        return cv2.blur(img, (kx, ky))
+        
+    return img
+
+def apply_threshold_single(img, mode, val, fill_color, block_size, constant_c, sigma_x, sigma_y):
+    if not isinstance(img, np.ndarray):
+        raise TypeError(f"img must be a numpy.ndarray. Got {type(img).__name__}")
+    
+    check_type(mode, str, 'mode')
+    check_type(val, int, 'val')
+    check_range(val, 0, 255, 'val')
+    check_type(fill_color, int, 'fill_color')
+    check_range(fill_color, 0, 255, 'fill_color')
+    check_odd_positive(block_size, 'block_size', min_val=3)
+    check_type(constant_c, int, 'constant_c')
+    if type(sigma_x) not in (int, float):
+        raise TypeError(f"sigma_x must be int or float. Got {type(sigma_x).__name__}")
+    if type(sigma_y) not in (int, float):
+        raise TypeError(f"sigma_y must be int or float. Got {type(sigma_y).__name__}")
+        
+    sx = float(sigma_x)
+    sy = float(sigma_y)
+    if sx < 0.0 or sy < 0.0:
+        raise ValueError("sigma_x and sigma_y must be non-negative")
+
+    supported_modes = {
+        "Binary Thresholding", "Binary Thresholding Inverted",
+        "Truncate Thresholding", "Threshold to Zero", "Threshold to Zero Inverted",
+        "Otsu's Thresholding", "Otsu's Thresholding Inverted",
+        "Triangle Thresholding", "Triangle Thresholding Inverted",
+        "Adaptive Mean", "Adaptive Mean Inverted",
+        "Adaptive Gaussian", "Adaptive Gaussian Inverted"
+    }
+    check_one_of(mode, supported_modes, 'mode')
+
+    if mode == "Binary Thresholding":
+        _, res = cv2.threshold(img, val, fill_color, cv2.THRESH_BINARY)
+    elif mode == "Binary Thresholding Inverted":
+        _, res = cv2.threshold(img, val, fill_color, cv2.THRESH_BINARY_INV)
+    elif mode == "Truncate Thresholding":
+        _, res = cv2.threshold(img, val, fill_color, cv2.THRESH_TRUNC)
+    elif mode == "Threshold to Zero":
+        _, res = cv2.threshold(img, val, fill_color, cv2.THRESH_TOZERO)
+    elif mode == "Threshold to Zero Inverted":
+        _, res = cv2.threshold(img, val, fill_color, cv2.THRESH_TOZERO_INV)
+        
+    elif mode == "Otsu's Thresholding":
+        otsu_val, _ = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        adjusted_val = np.clip(int(otsu_val) - constant_c, 0, 255)
+        _, res = cv2.threshold(img, adjusted_val, fill_color, cv2.THRESH_BINARY)
+    elif mode == "Otsu's Thresholding Inverted":
+        otsu_val, _ = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        adjusted_val = np.clip(int(otsu_val) - constant_c, 0, 255)
+        _, res = cv2.threshold(img, adjusted_val, fill_color, cv2.THRESH_BINARY_INV)
+        
+    elif mode == "Triangle Thresholding":
+        tri_val, _ = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_TRIANGLE)
+        adjusted_val = np.clip(int(tri_val) - constant_c, 0, 255)
+        _, res = cv2.threshold(img, adjusted_val, fill_color, cv2.THRESH_BINARY)
+    elif mode == "Triangle Thresholding Inverted":
+        tri_val, _ = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_TRIANGLE)
+        adjusted_val = np.clip(int(tri_val) - constant_c, 0, 255)
+        _, res = cv2.threshold(img, adjusted_val, fill_color, cv2.THRESH_BINARY_INV)
+        
+    elif mode == "Adaptive Mean":
+        res = cv2.adaptiveThreshold(img, fill_color, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, block_size, constant_c)
+    elif mode == "Adaptive Mean Inverted":
+        res = cv2.adaptiveThreshold(img, fill_color, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, block_size, constant_c)
+        
+    elif mode == "Adaptive Gaussian":
+        if sx > 0.0 or sy > 0.0:
+            local_gaussian = cv2.GaussianBlur(img, (block_size, block_size), sigmaX=sx, sigmaY=sy, borderType=cv2.BORDER_REPLICATE)
+            threshold_matrix = np.clip(local_gaussian.astype(np.int16) - constant_c, 0, 255).astype(np.uint8)
+            res = np.where(img > threshold_matrix, fill_color, 0).astype(np.uint8)
+        else:
+            res = cv2.adaptiveThreshold(img, fill_color, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, block_size, constant_c)
+    elif mode == "Adaptive Gaussian Inverted":
+        if sx > 0.0 or sy > 0.0:
+            local_gaussian = cv2.GaussianBlur(img, (block_size, block_size), sigmaX=sx, sigmaY=sy, borderType=cv2.BORDER_REPLICATE)
+            threshold_matrix = np.clip(local_gaussian.astype(np.int16) - constant_c, 0, 255).astype(np.uint8)
+            res = np.where(img <= threshold_matrix, fill_color, 0).astype(np.uint8)
+        else:
+            res = cv2.adaptiveThreshold(img, fill_color, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, block_size, constant_c)
+    else:
+        res = img
+    return res
+
+def apply_threshold(img, step):
+    if not isinstance(img, np.ndarray):
+        raise TypeError(f"img must be a numpy.ndarray. Got {type(img).__name__}")
+    verify_step_base(step)
+    
+    # Check all keys
+    required_keys = {'mode', 'value', 'block_size', 'constant_c', 'channel_mode', 'sigma_x', 'sigma_y', 'fill_color'}
+    for k in required_keys:
+        if k not in step:
+            raise KeyError(f"Missing required parameter '{k}' for Thresholding")
+            
+    check_type(step['mode'], str, 'mode')
+    check_type(step['value'], int, 'value')
+    check_type(step['block_size'], int, 'block_size')
+    check_type(step['constant_c'], int, 'constant_c')
+    check_type(step['channel_mode'], str, 'channel_mode')
+    if type(step['sigma_x']) not in (int, float):
+        raise TypeError(f"sigma_x must be int or float. Got {type(step['sigma_x']).__name__}")
+    if type(step['sigma_y']) not in (int, float):
+        raise TypeError(f"sigma_y must be int or float. Got {type(step['sigma_y']).__name__}")
+    check_type(step['fill_color'], str, 'fill_color')
+    
+    mode = step['mode']
+    val = step['value']
+    block_size = step['block_size']
+    constant_c = step['constant_c']
+    channel_mode = step['channel_mode']
+    sigma_x = float(step['sigma_x'])
+    sigma_y = float(step['sigma_y'])
+    fill_color_param = step['fill_color']
+    
+    check_one_of(channel_mode, {'Grayscale', 'Color Channels'}, 'channel_mode')
+    
+    # Hex validation
+    if not fill_color_param.startswith('#') or len(fill_color_param) != 7:
+        raise ValueError(f"fill_color must be a Hex string starting with '#' and length 7. Got '{fill_color_param}'")
+        
+    try:
+        hex_clean = fill_color_param.lstrip('#')
+        r = int(hex_clean[0:2], 16)
+        g = int(hex_clean[2:4], 16)
+        b = int(hex_clean[4:6], 16)
+    except Exception as hex_err:
+        raise ValueError(f"Invalid Hex format in fill_color: '{fill_color_param}'. Error: {hex_err}")
+        
+    if channel_mode == 'Grayscale' and len(img.shape) > 2:
+        raise ValueError("Grayscale channel mode requires a single-channel image. Please add a 'Convert to Grayscale' step prior to this Thresholding step in the pipeline.")
+        
+    if mode.startswith("Adaptive") and len(img.shape) > 2:
+        raise ValueError(f"Adaptive thresholding modes ('{mode}') require a single-channel grayscale image. Please add a 'Convert to Grayscale' step prior to this step in the pipeline.")
+        
+    if len(img.shape) > 2:
+        channels = cv2.split(img)
+        res_channels = []
+        fill_color_tuple = (b, g, r)
+        for i, ch in enumerate(channels):
+            res_ch = apply_threshold_single(ch, mode, val, fill_color_tuple[i], block_size, constant_c, sigma_x, sigma_y)
+            res_channels.append(res_ch)
+        return cv2.merge(res_channels)
+    else:
+        gray_val = int(0.299 * r + 0.587 * g + 0.114 * b)
+        return apply_threshold_single(img, mode, val, gray_val, block_size, constant_c, sigma_x, sigma_y)
+
+def apply_edges(img, step):
+    if not isinstance(img, np.ndarray):
+        raise TypeError(f"img must be a numpy.ndarray. Got {type(img).__name__}")
+    verify_step_base(step)
+    
+    if 'algorithm' not in step:
+        raise KeyError("Missing required parameter 'algorithm' for Edge Detection")
+    check_type(step['algorithm'], str, 'algorithm')
+    algo = step['algorithm']
+    check_one_of(algo, {'Canny', 'Sobel', 'Scharr', 'Laplacian'}, 'algorithm')
+    
+    if len(img.shape) > 2:
+        raise ValueError("Edge detection steps require a single-channel grayscale image. Please add a 'Convert to Grayscale' step prior to this step in the pipeline.")
+        
+    if algo == 'Canny':
+        required_canny = {'low', 'high', 'aperture', 'l2_gradient'}
+        for k in required_canny:
+            if k not in step: raise KeyError(f"Missing Canny parameter '{k}'")
+            
+        check_type(step['low'], int, 'low')
+        check_type(step['high'], int, 'high')
+        check_type(step['aperture'], int, 'aperture')
+        check_type(step['l2_gradient'], bool, 'l2_gradient')
+        
+        low = step['low']
+        high = step['high']
+        aperture = step['aperture']
+        l2 = step['l2_gradient']
+        
+        check_range(low, 0, 255, 'low')
+        check_range(high, 0, 255, 'high')
+        check_one_of(aperture, {3, 5, 7}, 'aperture')
+        
+        return cv2.Canny(img, low, high, apertureSize=aperture, L2gradient=l2)
+        
+    elif algo == 'Sobel':
+        required_sobel = {'dx', 'dy', 'ksize', 'scale', 'delta'}
+        for k in required_sobel:
+            if k not in step: raise KeyError(f"Missing Sobel parameter '{k}'")
+            
+        check_type(step['dx'], int, 'dx')
+        check_type(step['dy'], int, 'dy')
+        check_type(step['ksize'], int, 'ksize')
+        if type(step['scale']) not in (int, float):
+            raise TypeError(f"scale must be int or float. Got {type(step['scale']).__name__}")
+        if type(step['delta']) not in (int, float):
+            raise TypeError(f"delta must be int or float. Got {type(step['delta']).__name__}")
+            
+        dx = step['dx']
+        dy = step['dy']
+        ksize = step['ksize']
+        scale = float(step['scale'])
+        delta = float(step['delta'])
+        
+        check_one_of(ksize, {1, 3, 5, 7}, 'ksize')
+        if dx < 0 or dy < 0:
+            raise ValueError(f"dx and dy must be non-negative integers. Got dx={dx}, dy={dy}")
+        if dx == 0 and dy == 0:
+            raise ValueError("dx and dy cannot both be zero")
+            
+        if ksize == 1:
+            if dx > 1 or dy > 1 or (dx == 1 and dy == 1):
+                raise ValueError("For Sobel with ksize=1, dx and dy must be <= 1, and not both 1.")
+        else:
+            if dx >= ksize or dy >= ksize:
+                raise ValueError(f"For Sobel with ksize={ksize}, dx and dy must be less than ksize. Got dx={dx}, dy={dy}")
+                
+        sobel = cv2.Sobel(img, cv2.CV_16S, dx, dy, ksize=ksize, scale=scale, delta=delta)
+        return cv2.convertScaleAbs(sobel)
+        
+    elif algo == 'Scharr':
+        required_scharr = {'dx', 'dy', 'scale', 'delta'}
+        for k in required_scharr:
+            if k not in step: raise KeyError(f"Missing Scharr parameter '{k}'")
+            
+        check_type(step['dx'], int, 'dx')
+        check_type(step['dy'], int, 'dy')
+        if type(step['scale']) not in (int, float):
+            raise TypeError(f"scale must be int or float. Got {type(step['scale']).__name__}")
+        if type(step['delta']) not in (int, float):
+            raise TypeError(f"delta must be int or float. Got {type(step['delta']).__name__}")
+            
+        dx = step['dx']
+        dy = step['dy']
+        scale = float(step['scale'])
+        delta = float(step['delta'])
+        
+        if not ((dx == 1 and dy == 0) or (dx == 0 and dy == 1)):
+            raise ValueError(f"Scharr filter only supports dx=1 dy=0 or dx=0 dy=1. Got dx={dx}, dy={dy}")
+            
+        scharr = cv2.Scharr(img, cv2.CV_16S, dx, dy, scale=scale, delta=delta)
+        return cv2.convertScaleAbs(scharr)
+        
+    elif algo == 'Laplacian':
+        required_lap = {'ksize', 'scale', 'delta'}
+        for k in required_lap:
+            if k not in step: raise KeyError(f"Missing Laplacian parameter '{k}'")
+            
+        check_type(step['ksize'], int, 'ksize')
+        if type(step['scale']) not in (int, float):
+            raise TypeError(f"scale must be int or float. Got {type(step['scale']).__name__}")
+        if type(step['delta']) not in (int, float):
+            raise TypeError(f"delta must be int or float. Got {type(step['delta']).__name__}")
+            
+        ksize = step['ksize']
+        scale = float(step['scale'])
+        delta = float(step['delta'])
+        
+        check_one_of(ksize, {1, 3, 5, 7}, 'ksize')
+        
+        laplacian = cv2.Laplacian(img, cv2.CV_16S, ksize=ksize, scale=scale, delta=delta)
+        return cv2.convertScaleAbs(laplacian)
+        
+    return img
+
+def apply_upsample(img, step):
+    if not isinstance(img, np.ndarray):
+        raise TypeError(f"img must be a numpy.ndarray. Got {type(img).__name__}")
+    verify_step_base(step)
+    
+    if 'scale' not in step:
+        raise KeyError("Missing required parameter 'scale' for Upsample")
+    if 'interpolation' not in step:
+        raise KeyError("Missing required parameter 'interpolation' for Upsample")
+        
+    if type(step['scale']) not in (int, float):
+        raise TypeError(f"scale must be int or float. Got {type(step['scale']).__name__}")
+    check_type(step['interpolation'], str, 'interpolation')
+    
+    scale = float(step['scale'])
+    interp_name = step['interpolation']
+    
+    if scale <= 0.0:
+        raise ValueError(f"scale must be a positive float/int. Got {scale}")
+        
+    interp_map = {
+        'Bilinear (Fast)': cv2.INTER_LINEAR,
+        'Bicubic (Sharp)': cv2.INTER_CUBIC,
+        'Lanczos (Ultra Sharp)': cv2.INTER_LANCZOS4,
+        'Nearest Neighbor': cv2.INTER_NEAREST
+    }
+    check_one_of(interp_name, set(interp_map.keys()), 'interpolation')
+    
+    if scale == 1.0:
+        return img
+        
+    flags = interp_map[interp_name]
+    
+    h, w = img.shape[:2]
+    new_w = int(w * scale)
+    new_h = int(h * scale)
+    return cv2.resize(img, (new_w, new_h), interpolation=flags)
+
+def apply_crop(img, step):
+    if not isinstance(img, np.ndarray):
+        raise TypeError(f"img must be a numpy.ndarray. Got {type(img).__name__}")
+    verify_step_base(step)
+    
+    required_crop = {'left', 'right', 'top', 'bottom'}
+    for k in required_crop:
+        if k not in step: raise KeyError(f"Missing Crop parameter '{k}'")
+        if type(step[k]) not in (int, float):
+            raise TypeError(f"Crop parameter '{k}' must be int or float. Got {type(step[k]).__name__}")
+            
+    left = float(step['left'])
+    right = float(step['right'])
+    top = float(step['top'])
+    bottom = float(step['bottom'])
+    
+    if not (0.0 <= left <= 100.0) or not (0.0 <= right <= 100.0) or not (0.0 <= top <= 100.0) or not (0.0 <= bottom <= 100.0):
+        raise ValueError("Crop boundary percentages must be in range [0, 100]")
+        
+    if left + right >= 100.0:
+        raise ValueError(f"Sum of left and right crop percentages must be less than 100. Got left={left}, right={right}")
+    if top + bottom >= 100.0:
+        raise ValueError(f"Sum of top and bottom crop percentages must be less than 100. Got top={top}, bottom={bottom}")
+        
+    h, w = img.shape[:2]
+    
+    x1 = int(w * (left / 100.0))
+    x2 = int(w * (1.0 - right / 100.0))
+    y1 = int(h * (top / 100.0))
+    y2 = int(h * (1.0 - bottom / 100.0))
+    
+    if x2 - x1 <= 0 or y2 - y1 <= 0:
+        raise ValueError(f"Crop box dimensions must be positive. Calculated crop region: w={x2-x1}, h={y2-y1}")
+        
+    return img[y1:y2, x1:x2]
+
+def apply_heal(img, step):
+    if not isinstance(img, np.ndarray):
+        raise TypeError(f"img must be a numpy.ndarray. Got {type(img).__name__}")
+    verify_step_base(step)
+    
+    required_heal = {'operation', 'shape', 'kernel_x', 'kernel_y', 'iterations'}
+    for k in required_heal:
+        if k not in step: raise KeyError(f"Missing Heal parameter '{k}'")
+        
+    check_type(step['operation'], str, 'operation')
+    check_type(step['shape'], str, 'shape')
+    check_type(step['kernel_x'], int, 'kernel_x')
+    check_type(step['kernel_y'], int, 'kernel_y')
+    check_type(step['iterations'], int, 'iterations')
+    
+    op_name = step['operation']
+    shape_name = step['shape']
+    kernel_x = step['kernel_x']
+    kernel_y = step['kernel_y']
+    iterations = step['iterations']
+    
+    check_one_of(op_name, {
+        'Dilate (Thicken White)', 'Erode (Thicken Black)',
+        'Heal Gaps in White (Closing)', 'Heal Gaps in Black (Opening)'
+    }, 'operation')
+    
+    check_one_of(shape_name, {'Rectangle', 'Ellipse', 'Cross'}, 'shape')
+    
+    if kernel_x <= 0 or kernel_y <= 0:
+        raise ValueError(f"Heal kernel dimensions must be positive odd integers. Got ({kernel_x}, {kernel_y})")
+    if iterations <= 0:
+        raise ValueError(f"Heal iterations must be a positive integer. Got {iterations}")
+        
+    shape_map = {
+        'Rectangle': cv2.MORPH_RECT,
+        'Ellipse': cv2.MORPH_ELLIPSE,
+        'Cross': cv2.MORPH_CROSS
+    }
+    shape = shape_map[shape_name]
+    element = cv2.getStructuringElement(shape, (kernel_x, kernel_y))
+    
+    if op_name == 'Dilate (Thicken White)':
+        return cv2.dilate(img, element, iterations=iterations)
+    elif op_name == 'Erode (Thicken Black)':
+        return cv2.erode(img, element, iterations=iterations)
+    elif op_name == 'Heal Gaps in White (Closing)':
+        return cv2.morphologyEx(img, cv2.MORPH_CLOSE, element, iterations=iterations)
+    elif op_name == 'Heal Gaps in Black (Opening)':
+        return cv2.morphologyEx(img, cv2.MORPH_OPEN, element, iterations=iterations)
+        
+    return img
+
+def apply_fill(img, step):
+    if not isinstance(img, np.ndarray):
+        raise TypeError(f"img must be a numpy.ndarray. Got {type(img).__name__}")
+    verify_step_base(step)
+    
+    if 'fill_mode' not in step: raise KeyError("Missing required parameter 'fill_mode'")
+    if 'color' not in step: raise KeyError("Missing required parameter 'color'")
+    
+    check_type(step['fill_mode'], str, 'fill_mode')
+    check_type(step['color'], int, 'color')
+    
+    mode = step['fill_mode']
+    fill_color = step['color']
+    check_one_of(mode, {'Hole Filling (Contours)', 'Flood Fill', 'Corner Background Fill'}, 'fill_mode')
+    check_range(fill_color, 0, 255, 'color')
+    
+    is_color = len(img.shape) > 2
+    color_val = (fill_color, fill_color, fill_color) if is_color else fill_color
+    channels = img.shape[2] if is_color else 1
+    
+    if mode == 'Hole Filling (Contours)':
+        if 'min_area' not in step: raise KeyError("Missing 'min_area' for Hole Filling")
+        if 'max_area' not in step: raise KeyError("Missing 'max_area' for Hole Filling")
+        
+        if type(step['min_area']) not in (int, float):
+            raise TypeError(f"min_area must be int or float. Got {type(step['min_area']).__name__}")
+        if type(step['max_area']) not in (int, float):
+            raise TypeError(f"max_area must be int or float. Got {type(step['max_area']).__name__}")
+            
+        min_area = float(step['min_area'])
+        max_area = float(step['max_area'])
+        
+        if min_area < 0.0 or max_area < 0.0:
+            raise ValueError(f"min_area and max_area must be non-negative. Got min={min_area}, max={max_area}")
+        if min_area > max_area:
+            raise ValueError(f"min_area must be <= max_area. Got min={min_area}, max={max_area}")
+            
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if is_color else img.copy()
+        contours, _ = cv2.findContours(gray, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+        
+        res = img.copy()
+        for c in contours:
+            area = cv2.contourArea(c)
+            if min_area <= area <= max_area:
+                cv2.drawContours(res, [c], -1, color_val, thickness=cv2.FILLED)
+        return res
+        
+    elif mode == 'Flood Fill':
+        if 'seed_x' not in step: raise KeyError("Missing 'seed_x' for Flood Fill")
+        if 'seed_y' not in step: raise KeyError("Missing 'seed_y' for Flood Fill")
+        if 'lo_diff' not in step: raise KeyError("Missing 'lo_diff' for Flood Fill")
+        if 'up_diff' not in step: raise KeyError("Missing 'up_diff' for Flood Fill")
+        
+        if type(step['seed_x']) not in (int, float):
+            raise TypeError(f"seed_x must be int or float. Got {type(step['seed_x']).__name__}")
+        if type(step['seed_y']) not in (int, float):
+            raise TypeError(f"seed_y must be int or float. Got {type(step['seed_y']).__name__}")
+        check_type(step['lo_diff'], int, 'lo_diff')
+        check_type(step['up_diff'], int, 'up_diff')
+        
+        seed_x_pct = float(step['seed_x'])
+        seed_y_pct = float(step['seed_y'])
+        lo_diff = step['lo_diff']
+        up_diff = step['up_diff']
+        
+        if not (0.0 <= seed_x_pct <= 100.0) or not (0.0 <= seed_y_pct <= 100.0):
+            raise ValueError(f"Seed coordinates must be percentages in range [0, 100]. Got X={seed_x_pct}, Y={seed_y_pct}")
+        if lo_diff < 0 or up_diff < 0:
+            raise ValueError(f"Tolerances must be non-negative. Got lo={lo_diff}, up={up_diff}")
+            
+        h, w = img.shape[:2]
+        seed_x = int(w * (seed_x_pct / 100.0))
+        seed_y = int(h * (seed_y_pct / 100.0))
+        
+        if not (0 <= seed_x < w) or not (0 <= seed_y < h):
+            raise ValueError(f"Calculated seed coordinates out of bounds. X={seed_x}/{w}, Y={seed_y}/{h}")
+            
+        res = img.copy()
+        mask = np.zeros((h + 2, w + 2), np.uint8)
+        cv2.floodFill(res, mask, (seed_x, seed_y), color_val, (lo_diff,)*channels, (up_diff,)*channels)
+        return res
+        
+    elif mode == 'Corner Background Fill':
+        if 'lo_diff' not in step: raise KeyError("Missing 'lo_diff' for Corner Background Fill")
+        if 'up_diff' not in step: raise KeyError("Missing 'up_diff' for Corner Background Fill")
+        
+        check_type(step['lo_diff'], int, 'lo_diff')
+        check_type(step['up_diff'], int, 'up_diff')
+        
+        lo_diff = step['lo_diff']
+        up_diff = step['up_diff']
+        
+        if lo_diff < 0 or up_diff < 0:
+            raise ValueError(f"Tolerances must be non-negative. Got lo={lo_diff}, up={up_diff}")
+            
+        h, w = img.shape[:2]
+        res = img.copy()
+        mask = np.zeros((h + 2, w + 2), np.uint8)
+        
+        corners = [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]
+        diff_tuple = (lo_diff,) * channels
+        up_tuple = (up_diff,) * channels
+        
+        for pt in corners:
+            cv2.floodFill(res, mask, pt, color_val, diff_tuple, up_tuple)
+        return res
+        
+    return img
+
+def apply_edges_fill(img, step):
+    if not isinstance(img, np.ndarray):
+        raise TypeError(f"img must be a numpy.ndarray. Got {type(img).__name__}")
+    verify_step_base(step)
+    
+    edges_map = apply_edges(img, step)
+    
+    required_edge_fill = {'fill_target', 'color', 'min_area', 'max_area', 'draw_style', 'thickness'}
+    for k in required_edge_fill:
+        if k not in step: raise KeyError(f"Missing parameter '{k}' for Edge Fill")
+        
+    check_type(step['fill_target'], str, 'fill_target')
+    check_type(step['color'], int, 'color')
+    if type(step['min_area']) not in (int, float):
+        raise TypeError(f"min_area must be int or float. Got {type(step['min_area']).__name__}")
+    if type(step['max_area']) not in (int, float):
+        raise TypeError(f"max_area must be int or float. Got {type(step['max_area']).__name__}")
+    check_type(step['draw_style'], str, 'draw_style')
+    check_type(step['thickness'], int, 'thickness')
+    
+    fill_target = step['fill_target']
+    fill_color = step['color']
+    min_area = float(step['min_area'])
+    max_area = float(step['max_area'])
+    draw_style = step['draw_style']
+    thickness = step['thickness']
+    
+    check_one_of(fill_target, {'Original Image', 'Binary Mask (Black background)', 'Binary Mask (White background)'}, 'fill_target')
+    check_range(fill_color, 0, 255, 'color')
+    if min_area < 0.0 or max_area < 0.0:
+        raise ValueError(f"min_area and max_area must be non-negative. Got min={min_area}, max={max_area}")
+    if min_area > max_area:
+        raise ValueError(f"min_area must be <= max_area. Got min={min_area}, max={max_area}")
+    check_one_of(draw_style, {'Filled Contours', 'Contour Outlines', 'Filled Bounding Boxes', 'Bounding Box Outlines'}, 'draw_style')
+    if thickness <= 0:
+        raise ValueError(f"thickness must be a positive integer. Got {thickness}")
+        
+    is_color = len(img.shape) > 2
+    color_val = (fill_color, fill_color, fill_color) if is_color else fill_color
+    
+    if fill_target == 'Binary Mask (Black background)':
+        res = np.zeros_like(img)
+    elif fill_target == 'Binary Mask (White background)':
+        res = np.ones_like(img) * 255
+    else:
+        res = img.copy()
+        
+    contours, _ = cv2.findContours(edges_map, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+    for c in contours:
+        area = cv2.contourArea(c)
+        if min_area <= area <= max_area:
+            if draw_style == 'Filled Contours':
+                cv2.drawContours(res, [c], -1, color_val, thickness=cv2.FILLED)
+            elif draw_style == 'Contour Outlines':
+                cv2.drawContours(res, [c], -1, color_val, thickness=thickness)
+            elif draw_style == 'Filled Bounding Boxes':
+                x, y, w, h = cv2.boundingRect(c)
+                cv2.rectangle(res, (x, y), (x + w, y + h), color_val, thickness=cv2.FILLED)
+            elif draw_style == 'Bounding Box Outlines':
+                x, y, w, h = cv2.boundingRect(c)
+                cv2.rectangle(res, (x, y), (x + w, y + h), color_val, thickness=thickness)
+            
+    return res
+
+def apply_above_to_white(img, step):
+    if not isinstance(img, np.ndarray):
+        raise TypeError(f"img must be a numpy.ndarray. Got {type(img).__name__}")
+    verify_step_base(step)
+    
+    required_above_keys = {'algorithm', 'value', 'block_size_x', 'block_size_y', 'constant_c', 'channel_mode', 'condition', 'value_max', 'sigma_x', 'sigma_y', 'fill_color'}
+    for k in required_above_keys:
+        if k not in step: raise KeyError(f"Missing required parameter '{k}' for Above to White")
+        
+    check_type(step['algorithm'], str, 'algorithm')
+    check_type(step['value'], int, 'value')
+    check_type(step['block_size_x'], int, 'block_size_x')
+    check_type(step['block_size_y'], int, 'block_size_y')
+    check_type(step['constant_c'], int, 'constant_c')
+    check_type(step['channel_mode'], str, 'channel_mode')
+    check_type(step['condition'], str, 'condition')
+    check_type(step['value_max'], int, 'value_max')
+    if type(step['sigma_x']) not in (int, float):
+        raise TypeError(f"sigma_x must be int or float. Got {type(step['sigma_x']).__name__}")
+    if type(step['sigma_y']) not in (int, float):
+        raise TypeError(f"sigma_y must be int or float. Got {type(step['sigma_y']).__name__}")
+    check_type(step['fill_color'], str, 'fill_color')
+    
+    algo = step['algorithm']
+    val = step['value']
+    block_size_x = step['block_size_x']
+    block_size_y = step['block_size_y']
+    constant_c = step['constant_c']
+    channel_mode = step['channel_mode']
+    condition = step['condition']
+    val_max = step['value_max']
+    sigma_x = float(step['sigma_x'])
+    sigma_y = float(step['sigma_y'])
+    fill_color_param = step['fill_color']
+    
+    check_one_of(algo, {'Global', "Otsu's", 'Triangle', 'Adaptive Mean', 'Adaptive Gaussian'}, 'algorithm')
+    check_range(val, 0, 255, 'value')
+    check_range(val_max, 0, 255, 'value_max')
+    check_one_of(channel_mode, {'Grayscale', 'Color Channels'}, 'channel_mode')
+    check_one_of(condition, {
+        'Above or Equal (>=)', 'Above (>)', 'Below (<)', 'Below or Equal (<=)',
+        'Inside Range [Min, Max]', 'Outside Range'
+    }, 'condition')
+    
+    if not fill_color_param.startswith('#') or len(fill_color_param) != 7:
+        raise ValueError(f"fill_color must be a Hex string starting with '#' and length 7. Got '{fill_color_param}'")
+        
+    try:
+        hex_clean = fill_color_param.lstrip('#')
+        r = int(hex_clean[0:2], 16)
+        g = int(hex_clean[2:4], 16)
+        b = int(hex_clean[4:6], 16)
+    except Exception as hex_err:
+        raise ValueError(f"Invalid Hex format in fill_color: '{fill_color_param}'. Error: {hex_err}")
+        
+    if channel_mode == 'Grayscale' or len(img.shape) == 2:
+        fill_color = int(0.299 * r + 0.587 * g + 0.114 * b)
+    else:
+        fill_color = (b, g, r)
+        
+    if channel_mode == 'Grayscale' and len(img.shape) > 2:
+        raise ValueError("Grayscale channel mode requires a single-channel image. Please add a 'Convert to Grayscale' step prior to this step.")
+        
+    if algo.startswith("Adaptive") and len(img.shape) > 2:
+        raise ValueError(f"Adaptive thresholding algorithms ('{algo}') require a single-channel grayscale image. Please add a 'Convert to Grayscale' step prior to this step.")
+        
+    def apply_thresh_condition(source, threshold):
+        if condition == 'Below (<)':
+            return np.where(source < threshold, fill_color, source)
+        elif condition == 'Below or Equal (<=)':
+            return np.where(source <= threshold, fill_color, source)
+        elif condition == 'Above (>)':
+            return np.where(source > threshold, fill_color, source)
+        elif condition == 'Inside Range [Min, Max]':
+            if val > val_max:
+                raise ValueError(f"Min value of range ({val}) cannot be greater than Max value ({val_max})")
+            return np.where((source >= threshold) & (source <= val_max), fill_color, source)
+        elif condition == 'Outside Range':
+            if val > val_max:
+                raise ValueError(f"Min value of range ({val}) cannot be greater than Max value ({val_max})")
+            return np.where((source < threshold) | (source > val_max), fill_color, source)
+        else:
+            return np.where(source >= threshold, fill_color, source)
+            
+    if algo == 'Global':
+        res = apply_thresh_condition(img, val)
+        
+    elif algo == "Otsu's":
+        gray_temp = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) > 2 else img
+        otsu_val, _ = cv2.threshold(gray_temp, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        adjusted_val = np.clip(int(otsu_val) - constant_c, 0, 255)
+        res = apply_thresh_condition(img, adjusted_val)
+        
+    elif algo == 'Triangle':
+        gray_temp = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) > 2 else img
+        tri_val, _ = cv2.threshold(gray_temp, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_TRIANGLE)
+        adjusted_val = np.clip(int(tri_val) - constant_c, 0, 255)
+        res = apply_thresh_condition(img, adjusted_val)
+        
+    elif algo == 'Adaptive Mean':
+        check_odd_positive(block_size_x, 'block_size_x', min_val=3)
+        check_odd_positive(block_size_y, 'block_size_y', min_val=3)
+        local_mean = cv2.boxFilter(img, -1, (block_size_x, block_size_y), borderType=cv2.BORDER_REPLICATE)
+        threshold_matrix = np.clip(local_mean.astype(np.int16) - constant_c, 0, 255).astype(np.uint8)
+        res = apply_thresh_condition(img, threshold_matrix)
+        
+    elif algo == 'Adaptive Gaussian':
+        check_odd_positive(block_size_x, 'block_size_x', min_val=3)
+        check_odd_positive(block_size_y, 'block_size_y', min_val=3)
+        if sigma_x < 0.0 or sigma_y < 0.0:
+            raise ValueError("sigma_x and sigma_y must be non-negative")
+        local_gaussian = cv2.GaussianBlur(img, (block_size_x, block_size_y), sigmaX=sigma_x, sigmaY=sigma_y, borderType=cv2.BORDER_REPLICATE)
+        threshold_matrix = np.clip(local_gaussian.astype(np.int16) - constant_c, 0, 255).astype(np.uint8)
+        res = apply_thresh_condition(img, threshold_matrix)
+        
+    else:
+        res = img
+        
+    return res
+
+# Registry Mapping
+PROCESSING_REGISTRY = {
+    'grayscale': apply_grayscale,
+    'contrast': apply_contrast,
+    'blur': apply_blur,
+    'threshold': apply_threshold,
+    'edges': apply_edges,
+    'edges_fill': apply_edges_fill,
+    'upsample': apply_upsample,
+    'crop': apply_crop,
+    'heal': apply_heal,
+    'fill': apply_fill,
+    'above_to_white': apply_above_to_white
+}
+
+# ----------------- Flask Routes -----------------
+
+@app.route('/')
+def index():
+    return app.send_static_file('index.html')
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    import traceback
+    tb = traceback.format_exc()
+    # Print the traceback to the server console to ensure the server hard-logs/crashing feedback is fully visible
+    sys.stderr.write(f"\n--- UNHANDLED PIPELINE CRASH ---\n{tb}--------------------------------\n")
+    response = jsonify({
+        "error_type": type(e).__name__,
+        "message": str(e),
+        "traceback": tb
+    })
+    response.status_code = 500
+    return response
+
+@app.route('/process', methods=['POST'])
+def process():
+    # DO NOT wrap in try-except block.
+    # Let exceptions naturally crash the request thread and trigger the standard WSGI/Flask traceback.
+    params = request.json
+    if not params or 'image' not in params:
+        raise KeyError("Invalid request format: Top-level payload must contain an 'image' key.")
+        
+    # 1. Decode base64 image from client request
+    img_b64 = params['image'].split(',')[-1]
+    img_bytes = base64.b64decode(img_b64)
+    nparr = np.frombuffer(img_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    
+    if img is None:
+        raise ValueError("Failed to decode image data.")
+    
+    if 'comparison_baseline' not in params:
+        raise KeyError("Missing structural parameter: 'comparison_baseline'")
+    check_type(params['comparison_baseline'], str, 'comparison_baseline')
+    comparison_baseline = params['comparison_baseline']
+    
+    if 'pipeline' not in params:
+        raise KeyError("Missing structural parameter: 'pipeline'")
+    if type(params['pipeline']) is not list:
+        raise TypeError(f"Pipeline must be an array list. Got {type(params['pipeline']).__name__}")
+    pipeline_steps = params['pipeline']
+    
+    processed = img.copy()
+    baseline_img = None
+    baseline_captured = False
+    
+    for step in pipeline_steps:
+        verify_step_base(step)
+        step_id = step['id']
+        step_type = step['type']
+        is_disabled = step.get('disabled', False)
+        
+        # Apply active step transformations to processed image
+        if not is_disabled:
+            if step_type not in PROCESSING_REGISTRY:
+                raise KeyError(f"Registry Mapping Miss: Operation type '{step_type}' is unknown.")
+            process_func = PROCESSING_REGISTRY[step_type]
+            
+            input_img = processed.copy()
+            processed = process_func(processed, step)
+            
+            # Universal Dry/Wet strength blend logic
+            if 'strength' in step:
+                # Type was checked in verify_step_base
+                strength = float(step['strength']) / 100.0
+                if strength < 1.0:
+                    if processed.shape == input_img.shape:
+                        processed = cv2.addWeighted(processed, strength, input_img, 1.0 - strength, 0)
+                    elif processed.shape[:2] == input_img.shape[:2]:
+                        # Spatial dimensions match, but channel depths differ (e.g. grayscale conversion, edges)
+                        proc_temp = processed.copy()
+                        in_temp = input_img.copy()
+                        if len(proc_temp.shape) == 2:
+                            proc_temp = cv2.cvtColor(proc_temp, cv2.COLOR_GRAY2BGR)
+                        if len(in_temp.shape) == 2:
+                            in_temp = cv2.cvtColor(in_temp, cv2.COLOR_GRAY2BGR)
+                        blended = cv2.addWeighted(proc_temp, strength, in_temp, 1.0 - strength, 0)
+                        if len(processed.shape) == 2:
+                            processed = cv2.cvtColor(blended, cv2.COLOR_BGR2GRAY)
+                        else:
+                            processed = blended
+        
+        # Capture baseline image AFTER this step (whether it was active or disabled/skipped)
+        if comparison_baseline == step_id:
+            baseline_img = processed.copy()
+            baseline_captured = True
+        elif baseline_captured and not is_disabled and step_type == 'crop':
+            # Apply subsequent active crops to the baseline image to keep coordinates and dimensions completely synchronized
+            process_func = PROCESSING_REGISTRY[step_type]
+            baseline_img = process_func(baseline_img, step)
+                
+    # If the requested baseline step was never captured or is original, fall back to original with all active crops
+    if not baseline_captured or baseline_img is None:
+        baseline_img = img.copy()
+        for step in pipeline_steps:
+            verify_step_base(step)
+            if step.get('disabled', False):
+                continue
+            if step.get('type') == 'crop':
+                baseline_img = apply_crop(baseline_img, step)
+    
+    # 3. Re-encode back to base64
+    _, buffer = cv2.imencode('.png', processed)
+    proc_b64 = base64.b64encode(buffer).decode('utf-8')
+    
+    _, orig_buffer = cv2.imencode('.png', baseline_img)
+    orig_b64 = base64.b64encode(orig_buffer).decode('utf-8')
+    
+    return jsonify({
+        'processed_image': f"data:image/png;base64,{proc_b64}",
+        'original_image': f"data:image/png;base64,{orig_b64}"
+    })
+
+# ----------------- Server Booting -----------------
+
+if __name__ == "__main__":
+    port = 5000
+    
+    print("\n[SUCCESS] Local Flask Preprocessing Server started successfully!")
+    print(f" -> Local URL: http://localhost:{port}/index.html")
+    print(f" -> Serving workspace: {DIRECTORY}")
+    print(" -> Press Ctrl+C in this console to terminate the server.\n")
+    
+    try:
+        app.run(host='127.0.0.1', port=port, debug=True)
+    except Exception as e:
+        print(f"\n[ERROR] Flask server startup failed: {e}")
+        sys.exit(1)

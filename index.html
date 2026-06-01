@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="A state-of-the-art interactive image preprocessing application utilizing OpenCV. Build dynamic image processing pipelines with instant comparison, split-screen slider views, and spotlight lenses.">
+    <title>Premium Image Preprocessing Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar Navigation & Controls -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <span class="studio-logo">🎨</span>
+                <div>
+                    <h1 class="logo-text">Preprocessing Studio</h1>
+                    <p class="logo-sub">Engine v3.0</p>
+                </div>
+            </div>
+
+            <div class="sidebar-scroll">
+                <!-- Source Upload Section -->
+                <section class="control-card">
+                    <h2 class="card-title">📁 Source Image</h2>
+                    <div class="upload-dropzone" id="dropzone">
+                        <input type="file" id="file-input" accept="image/*" class="file-input">
+                        <div class="dropzone-text">
+                            <span class="upload-icon">📤</span>
+                            <p class="primary-text">Drag & Drop or Click</p>
+                            <p class="secondary-text">PNG, JPG, WEBP</p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Comparison Modes Section -->
+                <section class="control-card">
+                    <h2 class="card-title">👁️ Comparison Modes</h2>
+                    
+                    <div class="control-group">
+                        <span class="control-label">View Mode</span>
+                        <div class="select-wrapper">
+                            <select id="comparison-mode" class="custom-select">
+                                <option value="Split Slider">Split Slider</option>
+                                <option value="Overlay Opacity">Overlay Opacity</option>
+                                <option value="Pixel Difference">Pixel Difference</option>
+                                <option value="X-Ray Lens">X-Ray Lens</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="control-group">
+                        <span class="control-label">Compare Reference</span>
+                        <div class="select-wrapper">
+                            <select id="compare-reference" class="custom-select">
+                                <option value="none">None (Show Processed Only)</option>
+                                <option value="original">Original Image</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="control-group" id="comp-slider-group">
+                        <div class="slider-header">
+                            <span class="control-label" id="comp-slider-label">Split Position</span>
+                            <span class="slider-value" id="comp-slider-val">50%</span>
+                        </div>
+                        <input type="range" id="comp-slider" min="0" max="100" step="1" value="50" class="custom-range">
+                    </div>
+                </section>
+
+                <!-- Processing Pipeline Section -->
+                <section class="control-card">
+                    <h2 class="card-title">⚙️ Processing Pipeline</h2>
+                    
+                    <div class="control-group">
+                        <span class="control-label">Add Transformation</span>
+                        <div class="add-step-wrapper">
+                            <div class="select-wrapper" style="flex: 1;">
+                                <select id="select-new-step" class="custom-select">
+                                    <option value="grayscale">Convert to Grayscale</option>
+                                    <option value="contrast">Contrast & Brightness</option>
+                                    <option value="blur">Gaussian Blur</option>
+                                    <option value="threshold">Thresholding</option>
+                                    <option value="above_to_white">Above to White (Threshold)</option>
+                                    <option value="edges">Edge Detection (Sobel/Canny/Laplacian)</option>
+                                    <option value="edges_fill">Edge Detection + Fill (2-in-1)</option>
+                                    <option value="upsample">Upsampling (Scale Up)</option>
+                                    <option value="crop">Crop Region</option>
+                                    <option value="heal">Stroke Healing</option>
+                                    <option value="fill">Fill Region</option>
+                                </select>
+                            </div>
+                            <button id="add-step-btn" class="btn btn-primary btn-add-step">+</button>
+                        </div>
+                    </div>
+                    
+                    <div class="pipeline-list" id="pipeline-list">
+                        <!-- Active steps will be dynamically generated here by app.js -->
+                    </div>
+                </section>
+
+                <!-- Pipeline Presets -->
+                <section class="control-card">
+                    <h2 class="card-title">💾 Pipeline Presets</h2>
+                    <div style="display: flex; gap: 8px;">
+                        <button id="export-preset-btn" class="btn btn-secondary" style="flex: 1; padding: 10px 4px; font-size: 11px;">📤 Export JSON</button>
+                        <button id="import-preset-btn" class="btn btn-secondary" style="flex: 1; padding: 10px 4px; font-size: 11px;">📥 Import JSON</button>
+                        <input type="file" id="import-preset-file" accept=".json" style="display: none;">
+                    </div>
+                </section>
+
+                <!-- Download / Reset -->
+                <section class="action-card">
+                    <button id="download-btn" class="btn btn-primary">💾 Download Result</button>
+                    <button id="reset-view-btn" class="btn btn-secondary">🔄 Reset Zoom & Pan</button>
+                </section>
+            </div>
+        </aside>
+
+        <!-- Main Display Area -->
+        <main class="main-workspace">
+            <header class="workspace-header">
+                <div class="header-titles">
+                    <h2>Interactive Preprocessing Canvas</h2>
+                    <p>Scroll to Zoom (centered on cursor) • Click and Drag to Pan • Hover to Inspect Pixels</p>
+                </div>
+            </header>
+
+            <!-- Overlapping View Area -->
+            <div class="canvas-grid single-view">
+                <div class="view-card">
+                    <div class="view-card-header">
+                        <h3>👁️ Interactive Comparison Viewer</h3>
+                        <div class="header-modes">
+                            <span class="tag active" id="mode-badge">Split Slider</span>
+                        </div>
+                    </div>
+                    <div class="view-body" id="comparison-view-container">
+                        <div class="canvas-wrapper" id="canvas-wrapper">
+                            <canvas id="original-canvas" class="interactive-canvas"></canvas>
+                            <canvas id="processed-canvas" class="interactive-canvas"></canvas>
+                            <div id="split-divider" class="split-divider">
+                                <div class="split-handle">↔</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Coordinate / Color Inspector Status Bar -->
+            <footer class="status-bar">
+                <div class="status-item">
+                    <span class="status-label">Dimension:</span>
+                    <span class="status-value" id="status-dim">- × - px</span>
+                </div>
+                <div class="status-divider"></div>
+                <div class="status-item">
+                    <span class="status-label">Cursor:</span>
+                    <span class="status-value" id="status-coords">X: -, Y: -</span>
+                </div>
+                <div class="status-divider"></div>
+                <div class="status-item">
+                    <span class="status-label">Color:</span>
+                    <span class="status-value color-badge-container">
+                        <span class="color-preview" id="color-preview"></span>
+                        <span id="status-rgb">RGB(-, -, -)</span>
+                    </span>
+                </div>
+                <div class="status-divider"></div>
+                <div class="status-item">
+                    <span class="status-label">Zoom Scale:</span>
+                    <span class="status-value" id="status-zoom">100%</span>
+                </div>
+            </footer>
+        </main>
+    </div>
+
+    <!-- Error Overlay Modal -->
+    <div id="error-overlay" class="error-overlay hidden">
+        <div class="error-modal">
+            <div class="error-modal-header">
+                <span class="error-icon">⚠️</span>
+                <h3>Pipeline Aborted</h3>
+                <button id="close-error-btn" class="close-error-btn">✕</button>
+            </div>
+            <div class="error-modal-body">
+                <div class="error-summary">
+                    <span class="error-type" id="error-type">TypeError</span>: 
+                    <span class="error-message" id="error-message">Gaussian Blur kernels must be strict integers.</span>
+                </div>
+                <div class="error-traceback-wrapper">
+                    <pre class="error-traceback" id="error-traceback"></pre>
+                </div>
+                <p class="error-instructions">Adjust the controls to correct the invalid configuration. Calculation will resume automatically.</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
