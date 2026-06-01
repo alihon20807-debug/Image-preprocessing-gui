@@ -15,9 +15,26 @@ let isDraggingDivider = false;
 let mouseWrapperX = 0; // Current mouse coords relative to wrapper
 let mouseWrapperY = 0;
 
-// Dynamic Pipeline builder state
-let pipeline = []; // Holds dynamic ordered preprocessing steps
-let comparisonBaseline = "original"; // ID of step for baseline comparison, or "original"
+// Dynamic Layers builder state
+let layers = []; // Holds dynamic structured layers
+let comparisonBaseline = "original"; // ID of step/layer for baseline comparison, or "original"
+
+function createDefaultLayer(name = "New Layer") {
+    return {
+        id: 'layer_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+        name: name,
+        disabled: false,
+        input_source: 'previous', // 'previous', 'original', or layerId
+        blend_mode: 'normal',
+        blend_target: 'previous',
+        opacity: 100,
+        isExpanded: true,
+        steps: []
+    };
+}
+
+// Initialize with a default Base Layer
+layers = [ createDefaultLayer("Base Layer") ];
 
 // Canvas references
 const originalCanvas = document.getElementById('original-canvas');
@@ -39,10 +56,9 @@ const compSliderLabel = document.getElementById('comp-slider-label');
 const compSliderVal = document.getElementById('comp-slider-val');
 const compSliderGroup = document.getElementById('comp-slider-group');
 
-// Pipeline selector controls
-const selectNewStep = document.getElementById('select-new-step');
-const addStepBtn = document.getElementById('add-step-btn');
-const pipelineListContainer = document.getElementById('pipeline-list');
+// Layers selector controls
+const addLayerBtn = document.getElementById('add-layer-btn');
+const layersListContainer = document.getElementById('layers-list');
 
 // Actions
 const downloadBtn = document.getElementById('download-btn');
@@ -235,14 +251,27 @@ function updateCompareReferenceDropdown() {
         <option value="original">Original Image</option>
     `;
     
-    pipeline.forEach((step, index) => {
-        const option = document.createElement('option');
-        option.value = step.id;
-        option.textContent = `Step #${index + 1}: ${getStepName(step.type)}` + (step.disabled ? ' (Disabled)' : '');
-        compareReferenceSelect.appendChild(option);
+    layers.forEach((layer, lIdx) => {
+        const layerOpt = document.createElement('option');
+        layerOpt.value = layer.id;
+        layerOpt.textContent = `Layer #${lIdx + 1}: ${layer.name}` + (layer.disabled ? ' (Disabled)' : '');
+        compareReferenceSelect.appendChild(layerOpt);
+        
+        layer.steps.forEach((step, sIdx) => {
+            const stepOpt = document.createElement('option');
+            stepOpt.value = step.id;
+            stepOpt.innerHTML = `&nbsp;&nbsp;&nbsp;&nbsp;└─ Step #${sIdx + 1}: ${getStepName(step.type)}` + (step.disabled ? ' (Disabled)' : '');
+            compareReferenceSelect.appendChild(stepOpt);
+        });
     });
     
-    if (selectedVal !== "none" && selectedVal !== "original" && !pipeline.some(s => s.id === selectedVal)) {
+    // Verify if comparisonBaseline still exists, fallback if not
+    let exists = selectedVal === "none" || selectedVal === "original";
+    if (!exists) {
+        exists = layers.some(l => l.id === selectedVal || l.steps.some(s => s.id === selectedVal));
+    }
+    
+    if (!exists) {
         comparisonBaseline = "original";
         compareReferenceSelect.value = "original";
     } else {
@@ -250,28 +279,44 @@ function updateCompareReferenceDropdown() {
     }
 }
 
-function renderPipeline() {
+function renderLayers() {
+    // Verify layer inputs and targets for validity (prevent stale IDs after deletion/moves)
+    layers.forEach((layer, index) => {
+        if (layer.input_source !== 'previous' && layer.input_source !== 'original') {
+            const precedingExists = layers.slice(0, index).some(l => l.id === layer.input_source);
+            if (!precedingExists) {
+                layer.input_source = 'previous';
+            }
+        }
+        if (layer.blend_target !== 'previous' && layer.blend_target !== 'original') {
+            const precedingExists = layers.slice(0, index).some(l => l.id === layer.blend_target);
+            if (!precedingExists) {
+                layer.blend_target = 'previous';
+            }
+        }
+    });
+
     // Save sidebar scroll position to prevent jumps during swaps or updates
     const scrollContainer = document.querySelector('.sidebar-scroll');
     const prevScrollTop = scrollContainer ? scrollContainer.scrollTop : 0;
     
-    pipelineListContainer.innerHTML = '';
+    layersListContainer.innerHTML = '';
     
     // Dynamically rebuild dropdown references
     updateCompareReferenceDropdown();
     
-    if (pipeline.length === 0) {
-        pipelineListContainer.innerHTML = `
+    if (layers.length === 0) {
+        layersListContainer.innerHTML = `
             <div class="pipeline-card-desc" style="text-align: center; padding: 24px 0; border: 1.5px dashed rgba(255,255,255,0.06); border-radius: 8px;">
-                No active transformations.<br>Select a step above to append.
+                No active layers.<br>Click "Add New Layer" above to create one.
             </div>
         `;
         return;
     }
     
-    pipeline.forEach((step, index) => {
-        const card = createPipelineCardElement(step, index);
-        pipelineListContainer.appendChild(card);
+    layers.forEach((layer, index) => {
+        const card = createLayerCardElement(layer, index);
+        layersListContainer.appendChild(card);
     });
     
     // Restore sidebar scroll position
@@ -280,7 +325,144 @@ function renderPipeline() {
     }
 }
 
-function createPipelineCardElement(step, index) {
+function createLayerCardElement(layer, index) {
+    const card = document.createElement('div');
+    card.className = 'layer-card';
+    if (layer.disabled) card.classList.add('disabled-layer');
+    if (comparisonBaseline === layer.id) card.classList.add('active-layer');
+    
+    card.dataset.index = index;
+    card.dataset.id = layer.id;
+    
+    // Build options for input source dropdown
+    let inputSourceOptions = `
+        <option value="previous" ${layer.input_source === 'previous' ? 'selected' : ''}>Previous Layer</option>
+        <option value="original" ${layer.input_source === 'original' ? 'selected' : ''}>Original Image</option>
+    `;
+    // Add other preceding layers as input options!
+    for (let i = 0; i < index; i++) {
+        inputSourceOptions += `<option value="${layers[i].id}" ${layer.input_source === layers[i].id ? 'selected' : ''}>Layer: ${layers[i].name}</option>`;
+    }
+    
+    // Build options for blend target dropdown
+    let blendTargetOptions = `
+        <option value="previous" ${layer.blend_target === 'previous' ? 'selected' : ''}>Previous Layer</option>
+        <option value="original" ${layer.blend_target === 'original' ? 'selected' : ''}>Original Image</option>
+    `;
+    for (let i = 0; i < index; i++) {
+        blendTargetOptions += `<option value="${layers[i].id}" ${layer.blend_target === layers[i].id ? 'selected' : ''}>Layer: ${layers[i].name}</option>`;
+    }
+    
+    // Build steps HTML
+    let stepsHtml = '';
+    layer.steps.forEach((step, sIdx) => {
+        const stepCard = createPipelineCardElement(step, sIdx, layer.id);
+        stepsHtml += stepCard.outerHTML;
+    });
+    
+    const isExpanded = layer.isExpanded !== false;
+    const isBaseline = comparisonBaseline === layer.id;
+    
+    card.innerHTML = `
+        <div class="layer-card-header">
+            <span class="layer-drag-handle" title="Drag to Reorder">☰</span>
+            <span class="layer-expand-btn ${isExpanded ? 'expanded' : ''}" style="cursor: pointer;" title="Toggle Layer Controls">${isExpanded ? '▼' : '▶'}</span>
+            <input type="text" class="layer-title-input" value="${layer.name}" title="Click to rename layer">
+            <div class="layer-header-actions">
+                <button class="action-btn btn-toggle-layer" title="${layer.disabled ? 'Enable Layer' : 'Disable Layer'}">${layer.disabled ? '🚫' : '👁️'}</button>
+                <button class="action-btn btn-layer-baseline ${isBaseline ? 'active' : ''}" title="Set Layer Output as Baseline">⚖️</button>
+                <button class="action-btn btn-layer-up" title="Move Layer Up" ${index === 0 ? 'disabled' : ''}>▲</button>
+                <button class="action-btn btn-layer-down" title="Move Layer Down" ${index === layers.length - 1 ? 'disabled' : ''}>▼</button>
+                <button class="action-btn btn-delete-layer" title="Delete Layer">✕</button>
+            </div>
+        </div>
+        
+        <div class="layer-card-body ${isExpanded ? '' : 'collapsed'}">
+            <!-- Properties Grid -->
+            <div class="layer-properties-grid">
+                <div class="control-group">
+                    <span class="control-label" style="font-size: 11px;">Input Source</span>
+                    <div class="select-wrapper">
+                        <select class="custom-select select-layer-input" style="font-size: 11px; padding: 6px 10px;">
+                            ${inputSourceOptions}
+                        </select>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <span class="control-label" style="font-size: 11px;">Blend Mode</span>
+                    <div class="select-wrapper">
+                        <select class="custom-select select-layer-blend" style="font-size: 11px; padding: 6px 10px;">
+                            <option value="normal" ${layer.blend_mode === 'normal' ? 'selected' : ''}>Normal (Alpha)</option>
+                            <option value="add" ${layer.blend_mode === 'add' ? 'selected' : ''}>Add</option>
+                            <option value="subtract" ${layer.blend_mode === 'subtract' ? 'selected' : ''}>Subtract</option>
+                            <option value="multiply" ${layer.blend_mode === 'multiply' ? 'selected' : ''}>Multiply</option>
+                            <option value="screen" ${layer.blend_mode === 'screen' ? 'selected' : ''}>Screen</option>
+                            <option value="difference" ${layer.blend_mode === 'difference' ? 'selected' : ''}>Difference</option>
+                            <option value="darken" ${layer.blend_mode === 'darken' ? 'selected' : ''}>Darken</option>
+                            <option value="lighten" ${layer.blend_mode === 'lighten' ? 'selected' : ''}>Lighten</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="layer-properties-full">
+                <div class="control-group">
+                    <span class="control-label" style="font-size: 11px;">Blend Target</span>
+                    <div class="select-wrapper">
+                        <select class="custom-select select-layer-blend-target" style="font-size: 11px; padding: 6px 10px;">
+                            ${blendTargetOptions}
+                        </select>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Opacity Slider -->
+            <div class="control-group" style="gap: 4px;">
+                <div class="slider-header">
+                    <span class="control-label" style="font-size: 11px;">Layer Opacity</span>
+                    <span class="slider-value value-layer-opacity" style="font-size: 11px;">${layer.opacity}%</span>
+                </div>
+                <input type="range" class="custom-range slider-layer-opacity" min="0" max="100" step="5" value="${layer.opacity}" style="height: 4px;">
+            </div>
+            
+            <!-- Transformations List -->
+            <div class="layer-nested-steps-header">
+                <span>Transformations</span>
+            </div>
+            
+            <div class="layer-nested-steps-list">
+                ${stepsHtml}
+            </div>
+            
+            <!-- Add Step mini panel -->
+            <div class="add-step-wrapper" style="margin-top: 8px;">
+                <div class="select-wrapper" style="flex: 1;">
+                    <select class="custom-select select-mini-add-step" style="font-size: 11px; padding: 6px 10px;">
+                        <option value="grayscale">Convert to Grayscale</option>
+                        <option value="contrast">Contrast & Brightness</option>
+                        <option value="blur">Gaussian Blur</option>
+                        <option value="threshold">Thresholding</option>
+                        <option value="above_to_white">Above to White (Threshold)</option>
+                        <option value="edges">Edge Detection</option>
+                        <option value="edges_fill">Edge Detection + Fill</option>
+                        <option value="upsample">Upsampling (Scale Up)</option>
+                        <option value="crop">Crop Region</option>
+                        <option value="heal">Stroke Healing</option>
+                        <option value="fill">Fill Region</option>
+                    </select>
+                </div>
+                <button class="btn btn-primary btn-add-step-mini" style="font-size: 11px; padding: 6px 12px; height: auto;">➕ Add</button>
+            </div>
+        </div>
+    `;
+    
+    return card;
+}
+
+function createPipelineCardElement(step, index, layerId) {
+    const layerObj = layers.find(l => l.id === layerId);
+    const layerSteps = layerObj ? layerObj.steps : [];
+    
     const card = document.createElement('div');
     card.className = 'pipeline-card';
     if (step.disabled) {
@@ -291,6 +473,7 @@ function createPipelineCardElement(step, index) {
     }
     card.dataset.index = index;
     card.dataset.id = step.id;
+    card.dataset.layerId = layerId;
     
     let bodyHtml = '';
     
@@ -632,6 +815,16 @@ function createPipelineCardElement(step, index) {
                 </div>
             </div>
             
+            <div class="control-group">
+                <span class="control-label">Channel Mode</span>
+                <div class="select-wrapper">
+                    <select class="custom-select" data-param="channel_mode">
+                        <option value="Grayscale" ${step.channel_mode === 'Grayscale' ? 'selected' : ''}>Grayscale</option>
+                        <option value="Color Channels" ${step.channel_mode === 'Color Channels' ? 'selected' : ''}>Color Channels</option>
+                    </select>
+                </div>
+            </div>
+            
             <!-- Canny-Specific Thresholds -->
             <div class="control-group" id="grp-edges-canny-${step.id}" style="display: ${step.algorithm === 'Canny' ? 'block' : 'none'}">
                 <div class="control-group" style="margin-bottom: 12px;">
@@ -737,6 +930,16 @@ function createPipelineCardElement(step, index) {
                             <option value="Sobel" ${step.algorithm === 'Sobel' ? 'selected' : ''}>Sobel Filter</option>
                             <option value="Scharr" ${step.algorithm === 'Scharr' ? 'selected' : ''}>Scharr Filter</option>
                             <option value="Laplacian" ${step.algorithm === 'Laplacian' ? 'selected' : ''}>Laplacian Filter</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="control-group">
+                    <span class="control-label">Channel Mode</span>
+                    <div class="select-wrapper">
+                        <select class="custom-select" data-param="channel_mode">
+                            <option value="Grayscale" ${step.channel_mode === 'Grayscale' ? 'selected' : ''}>Grayscale</option>
+                            <option value="Color Channels" ${step.channel_mode === 'Color Channels' ? 'selected' : ''}>Color Channels</option>
                         </select>
                     </div>
                 </div>
@@ -1218,7 +1421,7 @@ function createPipelineCardElement(step, index) {
                 <button class="action-btn btn-toggle-enable" title="${isDisabled ? 'Enable Step' : 'Disable Step'}">${isDisabled ? '🚫' : '👁️'}</button>
                 <button class="action-btn btn-set-baseline ${isBaseline ? 'active' : ''}" title="Set as Comparison Baseline">⚖️</button>
                 <button class="action-btn btn-up" title="Move Up" ${index === 0 ? 'disabled' : ''}>▲</button>
-                <button class="action-btn btn-down" title="Move Down" ${index === pipeline.length - 1 ? 'disabled' : ''}>▼</button>
+                <button class="action-btn btn-down" title="Move Down" ${index === layerSteps.length - 1 ? 'disabled' : ''}>▼</button>
                 <button class="action-btn btn-delete" title="Remove">✕</button>
             </div>
         </div>
@@ -1331,7 +1534,7 @@ function setupEventListeners() {
     
     compareReferenceSelect.addEventListener('change', (e) => {
         comparisonBaseline = e.target.value;
-        renderPipeline();
+        renderLayers();
         triggerDebouncedProcess();
     });
     
@@ -1377,7 +1580,6 @@ function setupEventListeners() {
     dropzone.addEventListener('dragleave', () => {
         dropzone.classList.remove('dragover');
     });
-    
     dropzone.addEventListener('drop', (e) => {
         e.preventDefault();
         dropzone.classList.remove('dragover');
@@ -1385,178 +1587,297 @@ function setupEventListeners() {
             handleUploadedFile(e.dataTransfer.files[0]);
         }
     });
-    
-    // --- Dynamic Pipeline Addition ---
-    addStepBtn.addEventListener('click', () => {
-        const type = selectNewStep.value;
-        const id = generateStepId();
-        let newStep = { id, type, strength: 100 };
-        
-        // Append default values depending on step type
-        if (type === 'contrast') {
-            newStep.contrast = 1.0;
-            newStep.brightness = 0;
-        } else if (type === 'blur') {
-            newStep.blur_type = 'Gaussian Blur';
-            newStep.kernel_x = 5;
-            newStep.kernel_y = 5;
-            newStep.kernel = 5;
-            newStep.sigma_x = 0;
-            newStep.sigma_y = 0;
-            newStep.diameter = 9;
-            newStep.sigma_color = 75;
-            newStep.sigma_space = 75;
-        } else if (type === 'threshold') {
-            newStep.mode = 'Binary Thresholding';
-            newStep.value = 127;
-            newStep.block_size = 11;
-            newStep.constant_c = 2;
-            newStep.fill_color = '#ffffff';
-            newStep.channel_mode = 'Grayscale';
-            newStep.sigma_x = 0;
-            newStep.sigma_y = 0;
-            newStep.target_color = '#000000';
-            newStep.tolerance = 30;
-        } else if (type === 'above_to_white') {
-            newStep.algorithm = 'Global';
-            newStep.value = 127;
-            newStep.value_max = 255;
-            newStep.block_size_x = 11;
-            newStep.block_size_y = 11;
-            newStep.block_size = 11;
-            newStep.constant_c = 2;
-            newStep.sigma_x = 0;
-            newStep.sigma_y = 0;
-            newStep.fill_color = '#ffffff';
-            newStep.channel_mode = 'Grayscale';
-            newStep.condition = 'Above or Equal (>=)';
-        } else if (type === 'edges') {
-            newStep.algorithm = 'Canny';
-            newStep.low = 50;
-            newStep.high = 150;
-            newStep.aperture = 3;
-            newStep.l2_gradient = false;
-            newStep.dx = 1;
-            newStep.dy = 0;
-            newStep.ksize = 3;
-            newStep.scale = 1.0;
-            newStep.delta = 0;
-        } else if (type === 'edges_fill') {
-            newStep.algorithm = 'Canny';
-            newStep.low = 50;
-            newStep.high = 150;
-            newStep.aperture = 3;
-            newStep.l2_gradient = false;
-            newStep.dx = 1;
-            newStep.dy = 0;
-            newStep.ksize = 3;
-            newStep.scale = 1.0;
-            newStep.delta = 0;
-            newStep.fill_target = 'Original Image';
-            newStep.draw_style = 'Filled Contours';
-            newStep.thickness = 2;
-            newStep.color = 255;
-            newStep.min_area = 0;
-            newStep.max_area = 10000;
-        } else if (type === 'fill') {
-            newStep.fill_mode = 'Hole Filling (Contours)';
-            newStep.color = 255;
-            newStep.fill_color = '#ffffff';
-            newStep.use_target_color = false;
-            newStep.target_color = '#000000';
-            newStep.tolerance = 30;
-            newStep.min_area = 0;
-            newStep.max_area = 10000;
-            newStep.seed_x = 50;
-            newStep.seed_y = 50;
-            newStep.lo_diff = 20;
-            newStep.up_diff = 20;
-            newStep.inpaint_radius = 3;
-            newStep.channel_mode = 'Color Channels';
-        } else if (type === 'upsample') {
-            newStep.scale = 2.0;
-            newStep.interpolation = 'Bicubic (Sharp)';
-        } else if (type === 'crop') {
-            newStep.left = 0;
-            newStep.right = 0;
-            newStep.top = 0;
-            newStep.bottom = 0;
-        } else if (type === 'heal') {
-            newStep.operation = 'Heal Gaps in White (Closing)';
-            newStep.shape = 'Rectangle';
-            newStep.kernel_x = 3;
-            newStep.kernel_y = 3;
-            newStep.iterations = 1;
-            newStep.channel_mode = 'Color Channels';
-            newStep.skel_threshold = 127;
-            newStep.foreground_mode = 'Black strokes (Light background)';
-            newStep.use_target_color = false;
-            newStep.target_color = '#ff0000';
-            newStep.tolerance = 30;
-            newStep.fill_color = '#000000';
-            newStep.bg_color = '#ffffff';
-        }
-        
-        pipeline.push(newStep);
-        renderPipeline();
+
+    // --- Dynamic Layers and Transformations Addition ---
+    addLayerBtn.addEventListener('click', () => {
+        const newLayer = createDefaultLayer(`Layer ${layers.length + 1}`);
+        layers.push(newLayer);
+        renderLayers();
         triggerDebouncedProcess();
     });
     
-    // --- Event Delegation on Dynamic Pipeline List Container ---
+    // --- Event Delegation on Dynamic Layers Stack Container ---
     
-    // 1. Click Actions (Swap position / Delete step / Toggle enable / Set baseline)
-    pipelineListContainer.addEventListener('click', (e) => {
-        const card = e.target.closest('.pipeline-card');
-        if (!card) return;
+    // 1. Click Actions (Toggles, deletions, layer moves, mini-step additions)
+    layersListContainer.addEventListener('click', (e) => {
+        // --- Layer Card Actions ---
+        const layerCard = e.target.closest('.layer-card');
+        if (layerCard) {
+            const layerId = layerCard.dataset.id;
+            const layerIndex = parseInt(layerCard.dataset.index);
+            const layer = layers.find(l => l.id === layerId);
+            
+            if (e.target.closest('.btn-toggle-layer')) {
+                if (layer) {
+                    layer.disabled = !layer.disabled;
+                    renderLayers();
+                    triggerDebouncedProcess();
+                    return;
+                }
+            }
+            if (e.target.closest('.btn-delete-layer')) {
+                if (layer) {
+                    layers = layers.filter(l => l.id !== layerId);
+                    renderLayers();
+                    triggerDebouncedProcess();
+                    return;
+                }
+            }
+            if (e.target.closest('.btn-layer-baseline')) {
+                if (comparisonBaseline === layerId) {
+                    comparisonBaseline = "none";
+                } else {
+                    comparisonBaseline = layerId;
+                }
+                renderLayers();
+                triggerDebouncedProcess();
+                return;
+            }
+            if (e.target.closest('.btn-layer-up')) {
+                if (layerIndex > 0) {
+                    const temp = layers[layerIndex];
+                    layers[layerIndex] = layers[layerIndex - 1];
+                    layers[layerIndex - 1] = temp;
+                    renderLayers();
+                    triggerDebouncedProcess();
+                    return;
+                }
+            }
+            if (e.target.closest('.btn-layer-down')) {
+                if (layerIndex < layers.length - 1) {
+                    const temp = layers[layerIndex];
+                    layers[layerIndex] = layers[layerIndex + 1];
+                    layers[layerIndex + 1] = temp;
+                    renderLayers();
+                    triggerDebouncedProcess();
+                    return;
+                }
+            }
+            if (e.target.closest('.layer-expand-btn')) {
+                if (layer) {
+                    layer.isExpanded = !layer.isExpanded;
+                    renderLayers();
+                    return;
+                }
+            }
+            
+            // Mini Add Step Button inside Layer card
+            if (e.target.closest('.btn-add-step-mini')) {
+                const select = layerCard.querySelector('.select-mini-add-step');
+                const stepType = select.value;
+                const stepId = generateStepId();
+                
+                const newStep = {
+                    id: stepId,
+                    type: stepType,
+                    disabled: false,
+                    strength: 100
+                };
+                
+                // Append defaults
+                if (stepType === 'contrast') {
+                    newStep.contrast = 1.0;
+                    newStep.brightness = 0;
+                } else if (stepType === 'blur') {
+                    newStep.blur_type = 'Gaussian Blur';
+                    newStep.kernel_x = 5;
+                    newStep.kernel_y = 5;
+                    newStep.kernel = 5;
+                    newStep.sigma_x = 0;
+                    newStep.sigma_y = 0;
+                    newStep.diameter = 9;
+                    newStep.sigma_color = 75;
+                    newStep.sigma_space = 75;
+                } else if (stepType === 'threshold') {
+                    newStep.mode = 'Binary Thresholding';
+                    newStep.value = 127;
+                    newStep.block_size = 11;
+                    newStep.constant_c = 2;
+                    newStep.fill_color = '#ffffff';
+                    newStep.channel_mode = 'Grayscale';
+                    newStep.sigma_x = 0;
+                    newStep.sigma_y = 0;
+                    newStep.target_color = '#000000';
+                    newStep.tolerance = 30;
+                } else if (stepType === 'above_to_white') {
+                    newStep.algorithm = 'Global';
+                    newStep.value = 127;
+                    newStep.value_max = 255;
+                    newStep.block_size_x = 11;
+                    newStep.block_size_y = 11;
+                    newStep.block_size = 11;
+                    newStep.constant_c = 2;
+                    newStep.sigma_x = 0;
+                    newStep.sigma_y = 0;
+                    newStep.fill_color = '#ffffff';
+                    newStep.channel_mode = 'Grayscale';
+                    newStep.condition = 'Above or Equal (>=)';
+                } else if (stepType === 'edges') {
+                    newStep.algorithm = 'Canny';
+                    newStep.channel_mode = 'Grayscale';
+                    newStep.low = 50;
+                    newStep.high = 150;
+                    newStep.aperture = 3;
+                    newStep.l2_gradient = false;
+                    newStep.dx = 1;
+                    newStep.dy = 0;
+                    newStep.ksize = 3;
+                    newStep.scale = 1.0;
+                    newStep.delta = 0;
+                } else if (stepType === 'edges_fill') {
+                    newStep.algorithm = 'Canny';
+                    newStep.channel_mode = 'Grayscale';
+                    newStep.low = 50;
+                    newStep.high = 150;
+                    newStep.aperture = 3;
+                    newStep.l2_gradient = false;
+                    newStep.dx = 1;
+                    newStep.dy = 0;
+                    newStep.ksize = 3;
+                    newStep.scale = 1.0;
+                    newStep.delta = 0;
+                    newStep.fill_target = 'Original Image';
+                    newStep.draw_style = 'Filled Contours';
+                    newStep.thickness = 2;
+                    newStep.color = 255;
+                    newStep.min_area = 0;
+                    newStep.max_area = 10000;
+                } else if (stepType === 'fill') {
+                    newStep.fill_mode = 'Hole Filling (Contours)';
+                    newStep.color = 255;
+                    newStep.fill_color = '#ffffff';
+                    newStep.use_target_color = false;
+                    newStep.target_color = '#000000';
+                    newStep.tolerance = 30;
+                    newStep.min_area = 0;
+                    newStep.max_area = 10000;
+                    newStep.seed_x = 50;
+                    newStep.seed_y = 50;
+                    newStep.lo_diff = 20;
+                    newStep.up_diff = 20;
+                    newStep.inpaint_radius = 3;
+                    newStep.channel_mode = 'Color Channels';
+                } else if (stepType === 'upsample') {
+                    newStep.scale = 2.0;
+                    newStep.interpolation = 'Bicubic (Sharp)';
+                } else if (stepType === 'crop') {
+                    newStep.left = 0;
+                    newStep.right = 0;
+                    newStep.top = 0;
+                    newStep.bottom = 0;
+                } else if (stepType === 'heal') {
+                    newStep.operation = 'Heal Gaps in White (Closing)';
+                    newStep.shape = 'Rectangle';
+                    newStep.kernel_x = 3;
+                    newStep.kernel_y = 3;
+                    newStep.iterations = 1;
+                    newStep.channel_mode = 'Color Channels';
+                    newStep.skel_threshold = 127;
+                    newStep.foreground_mode = 'Black strokes (Light background)';
+                    newStep.use_target_color = false;
+                    newStep.target_color = '#ff0000';
+                    newStep.tolerance = 30;
+                    newStep.fill_color = '#000000';
+                    newStep.bg_color = '#ffffff';
+                }
+                
+                if (layer) {
+                    layer.steps.push(newStep);
+                    renderLayers();
+                    triggerDebouncedProcess();
+                    return;
+                }
+            }
+        }
         
-        const index = parseInt(card.dataset.index);
-        const id = card.dataset.id;
-        
-        if (e.target.closest('.btn-delete')) {
-            pipeline = pipeline.filter(step => step.id !== id);
-            renderPipeline();
-            triggerDebouncedProcess();
-        } else if (e.target.closest('.btn-toggle-enable')) {
-            const step = pipeline.find(s => s.id === id);
-            if (step) {
-                step.disabled = !step.disabled;
-                renderPipeline();
+        // --- Step (Transformation) Card Actions ---
+        const stepCard = e.target.closest('.pipeline-card');
+        if (stepCard) {
+            const layerId = stepCard.dataset.layerId;
+            const stepId = stepCard.dataset.id;
+            const stepIndex = parseInt(stepCard.dataset.index);
+            const layer = layers.find(l => l.id === layerId);
+            if (!layer) return;
+            
+            if (e.target.closest('.btn-delete')) {
+                layer.steps = layer.steps.filter(s => s.id !== stepId);
+                renderLayers();
                 triggerDebouncedProcess();
-            }
-        } else if (e.target.closest('.btn-set-baseline')) {
-            if (comparisonBaseline === id) {
-                comparisonBaseline = "none";
-            } else {
-                comparisonBaseline = id;
-            }
-            renderPipeline();
-            triggerDebouncedProcess();
-        } else if (e.target.closest('.btn-up')) {
-            if (index > 0) {
-                const temp = pipeline[index];
-                pipeline[index] = pipeline[index - 1];
-                pipeline[index - 1] = temp;
-                renderPipeline();
+            } else if (e.target.closest('.btn-toggle-enable')) {
+                const step = layer.steps.find(s => s.id === stepId);
+                if (step) {
+                    step.disabled = !step.disabled;
+                    renderLayers();
+                    triggerDebouncedProcess();
+                }
+            } else if (e.target.closest('.btn-set-baseline')) {
+                if (comparisonBaseline === stepId) {
+                    comparisonBaseline = "none";
+                } else {
+                    comparisonBaseline = stepId;
+                }
+                renderLayers();
                 triggerDebouncedProcess();
-            }
-        } else if (e.target.closest('.btn-down')) {
-            if (index < pipeline.length - 1) {
-                const temp = pipeline[index];
-                pipeline[index] = pipeline[index + 1];
-                pipeline[index + 1] = temp;
-                renderPipeline();
-                triggerDebouncedProcess();
+            } else if (e.target.closest('.btn-up')) {
+                if (stepIndex > 0) {
+                    const temp = layer.steps[stepIndex];
+                    layer.steps[stepIndex] = layer.steps[stepIndex - 1];
+                    layer.steps[stepIndex - 1] = temp;
+                    renderLayers();
+                    triggerDebouncedProcess();
+                }
+            } else if (e.target.closest('.btn-down')) {
+                if (stepIndex < layer.steps.length - 1) {
+                    const temp = layer.steps[stepIndex];
+                    layer.steps[stepIndex] = layer.steps[stepIndex + 1];
+                    layer.steps[stepIndex + 1] = temp;
+                    renderLayers();
+                    triggerDebouncedProcess();
+                }
             }
         }
     });
     
     // 2. Input Actions (Slider parameter modifications)
-    pipelineListContainer.addEventListener('input', (e) => {
+    layersListContainer.addEventListener('input', (e) => {
+        // A. Layer card title renaming
+        if (e.target.classList.contains('layer-title-input')) {
+            const layerCard = e.target.closest('.layer-card');
+            if (layerCard) {
+                const layerId = layerCard.dataset.id;
+                const layer = layers.find(l => l.id === layerId);
+                if (layer) {
+                    layer.name = e.target.value;
+                    updateCompareReferenceDropdown(); // Refresh dropdown labels
+                }
+            }
+            return;
+        }
+        
+        // B. Layer Opacity Sliders
+        if (e.target.classList.contains('slider-layer-opacity')) {
+            const layerCard = e.target.closest('.layer-card');
+            if (layerCard) {
+                const layerId = layerCard.dataset.id;
+                const layer = layers.find(l => l.id === layerId);
+                if (layer) {
+                    layer.opacity = parseInt(e.target.value);
+                    layerCard.querySelector('.value-layer-opacity').textContent = `${layer.opacity}%`;
+                    triggerDebouncedProcess();
+                }
+            }
+            return;
+        }
+        
+        // C. Step parameter sliders/inputs
         const card = e.target.closest('.pipeline-card');
         if (!card) return;
         
+        const layerId = card.dataset.layerId;
         const id = card.dataset.id;
-        const step = pipeline.find(s => s.id === id);
+        const layer = layers.find(l => l.id === layerId);
+        if (!layer) return;
+        const step = layer.steps.find(s => s.id === id);
         if (!step) return;
         
         const param = e.target.dataset.param;
@@ -1665,94 +1986,13 @@ function setupEventListeners() {
                 } else if (param === 'delta') {
                     step.delta = parseInt(val);
                     document.getElementById(`val-edges-delta-${id}`).textContent = step.delta >= 0 ? `+${step.delta}` : step.delta;
-                }
-            } else if (step.type === 'upsample') {
-                if (param === 'scale') {
-                    step.scale = parseFloat(val);
-                    document.getElementById(`val-upsample-scale-${id}`).textContent = `${step.scale.toFixed(1)}x`;
-                }
-            } else if (step.type === 'crop') {
-                let left = step.left;
-                let right = step.right;
-                let top = step.top;
-                let bottom = step.bottom;
-                
-                if (param === 'left') {
-                    left = parseInt(val);
-                    if (left + right > 95) {
-                        left = 95 - right;
-                        e.target.value = left;
-                    }
-                    step.left = left;
-                    document.getElementById(`val-crop-left-${id}`).textContent = `${left}%`;
-                } else if (param === 'right') {
-                    right = parseInt(val);
-                    if (left + right > 95) {
-                        right = 95 - left;
-                        e.target.value = right;
-                    }
-                    step.right = right;
-                    document.getElementById(`val-crop-right-${id}`).textContent = `${right}%`;
-                } else if (param === 'top') {
-                    top = parseInt(val);
-                    if (top + bottom > 95) {
-                        top = 95 - bottom;
-                        e.target.value = top;
-                    }
-                    step.top = top;
-                    document.getElementById(`val-crop-top-${id}`).textContent = `${top}%`;
-                } else if (param === 'bottom') {
-                    bottom = parseInt(val);
-                    if (top + bottom > 95) {
-                        bottom = 95 - top;
-                        e.target.value = bottom;
-                    }
-                    step.bottom = bottom;
-                    document.getElementById(`val-crop-bottom-${id}`).textContent = `${bottom}%`;
-                }
-            } else if (step.type === 'heal') {
-                if (param === 'kernel_x') {
-                    step.kernel_x = parseInt(val);
-                    const el = document.getElementById(`val-heal-kernel-x-${id}`);
-                    if (el) el.textContent = `${step.kernel_x}px`;
-                } else if (param === 'kernel_y') {
-                    step.kernel_y = parseInt(val);
-                    const el = document.getElementById(`val-heal-kernel-y-${id}`);
-                    if (el) el.textContent = `${step.kernel_y}px`;
-                } else if (param === 'iterations') {
-                    step.iterations = parseInt(val);
-                    const el = document.getElementById(`val-heal-iterations-${id}`);
-                    if (el) el.textContent = step.iterations;
-                } else if (param === 'skel_threshold') {
-                    step.skel_threshold = parseInt(val);
-                    const el = document.getElementById(`val-heal-threshold-${id}`);
-                    if (el) el.textContent = step.skel_threshold;
-                } else if (param === 'use_target_color') {
-                    step.use_target_color = val;
-                    renderPipeline();
-                } else if (param === 'target_color') {
-                    step.target_color = val;
-                } else if (param === 'tolerance') {
-                    step.tolerance = parseInt(val);
-                    const el = document.getElementById(`val-heal-tolerance-${id}`);
-                    if (el) el.textContent = step.tolerance;
-                } else if (param === 'fill_color') {
-                    step.fill_color = val;
-                } else if (param === 'bg_color') {
-                    step.bg_color = val;
-                }
-            } else if (step.type === 'fill' || step.type === 'edges_fill') {
-                if (param === 'color') {
-                    step.color = parseInt(val);
-                    const el = document.getElementById(`val-fill-color-${id}`);
-                    if (el) el.textContent = step.color;
                 } else if (param === 'fill_color') {
                     step.fill_color = val;
                 } else if (param === 'target_color') {
                     step.target_color = val;
                 } else if (param === 'use_target_color') {
                     step.use_target_color = val;
-                    renderPipeline();
+                    renderLayers();
                 } else if (param === 'tolerance') {
                     step.tolerance = parseInt(val);
                     const el = document.getElementById(`val-fill-tolerance-${id}`);
@@ -1795,13 +2035,52 @@ function setupEventListeners() {
         }
     });
     
-    // 3. Selection Actions (Threshold mode dropdown selection)
-    pipelineListContainer.addEventListener('change', (e) => {
+    // 3. Selection Actions (Layer properties & step dropdown selections)
+    layersListContainer.addEventListener('change', (e) => {
+        // A. Layer title rename complete (press Enter or blur)
+        if (e.target.classList.contains('layer-title-input')) {
+            renderLayers();
+            return;
+        }
+
+        // B. Layer Card properties dropdowns
+        const layerCard = e.target.closest('.layer-card');
+        if (layerCard) {
+            const layerId = layerCard.dataset.id;
+            const layer = layers.find(l => l.id === layerId);
+            
+            if (e.target.classList.contains('select-layer-input')) {
+                if (layer) {
+                    layer.input_source = e.target.value;
+                    triggerDebouncedProcess();
+                }
+                return;
+            }
+            if (e.target.classList.contains('select-layer-blend')) {
+                if (layer) {
+                    layer.blend_mode = e.target.value;
+                    triggerDebouncedProcess();
+                }
+                return;
+            }
+            if (e.target.classList.contains('select-layer-blend-target')) {
+                if (layer) {
+                    layer.blend_target = e.target.value;
+                    triggerDebouncedProcess();
+                }
+                return;
+            }
+        }
+        
+        // B. Step parameter dropdowns
         const card = e.target.closest('.pipeline-card');
         if (!card) return;
         
+        const layerId = card.dataset.layerId;
         const id = card.dataset.id;
-        const step = pipeline.find(s => s.id === id);
+        const layer = layers.find(l => l.id === layerId);
+        if (!layer) return;
+        const step = layer.steps.find(s => s.id === id);
         if (!step) return;
         
         const param = e.target.dataset.param;
@@ -1810,11 +2089,11 @@ function setupEventListeners() {
             triggerDebouncedProcess();
         } else if (param === 'blur_type') {
             step.blur_type = e.target.value;
-            renderPipeline();
+            renderLayers();
             triggerDebouncedProcess();
         } else if (param === 'algorithm') {
             step.algorithm = e.target.value;
-            renderPipeline();
+            renderLayers();
             triggerDebouncedProcess();
         } else if (param === 'aperture') {
             step.aperture = parseInt(e.target.value);
@@ -1833,18 +2112,18 @@ function setupEventListeners() {
             triggerDebouncedProcess();
         } else if (param === 'fill_mode') {
             step.fill_mode = e.target.value;
-            renderPipeline();
+            renderLayers();
             triggerDebouncedProcess();
         } else if (param === 'fill_target') {
             step.fill_target = e.target.value;
             triggerDebouncedProcess();
         } else if (param === 'draw_style') {
             step.draw_style = e.target.value;
-            renderPipeline();
+            renderLayers();
             triggerDebouncedProcess();
         } else if (param === 'operation') {
             step.operation = e.target.value;
-            renderPipeline();
+            renderLayers();
             triggerDebouncedProcess();
         } else if (param === 'foreground_mode') {
             step.foreground_mode = e.target.value;
@@ -1854,14 +2133,14 @@ function setupEventListeners() {
             triggerDebouncedProcess();
         } else if (param === 'mode') {
             step.mode = e.target.value;
-            renderPipeline();
+            renderLayers();
             triggerDebouncedProcess();
         } else if (param === 'channel_mode') {
             step.channel_mode = e.target.value;
             triggerDebouncedProcess();
         } else if (param === 'condition') {
             step.condition = e.target.value;
-            renderPipeline();
+            renderLayers();
             triggerDebouncedProcess();
         }
     });
@@ -1876,11 +2155,11 @@ function setupEventListeners() {
     const importFile = document.getElementById('import-preset-file');
     
     exportBtn.addEventListener('click', () => {
-        if (pipeline.length === 0) {
-            alert("Your pipeline is currently empty. Add some steps before exporting a preset!");
+        if (layers.length === 0) {
+            alert("Your Layers stack is currently empty. Add a layer before exporting a preset!");
             return;
         }
-        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(pipeline, null, 2));
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(layers, null, 2));
         const downloadAnchor = document.createElement('a');
         downloadAnchor.setAttribute("href", dataStr);
         downloadAnchor.setAttribute("download", "preprocessing_preset.json");
@@ -1901,13 +2180,23 @@ function setupEventListeners() {
             try {
                 const imported = JSON.parse(evt.target.result);
                 if (Array.isArray(imported)) {
-                    const isValid = imported.every(step => step.id && step.type);
-                    if (isValid) {
-                        pipeline = imported;
-                        renderPipeline();
+                    // Detect if layers format or legacy steps format
+                    const isLayersPreset = imported.every(l => l.id && l.name && Array.isArray(l.steps));
+                    const isLegacyStepsPreset = imported.every(step => step.id && step.type);
+                    
+                    if (isLayersPreset) {
+                        layers = imported;
+                        renderLayers();
+                        triggerDebouncedProcess();
+                    } else if (isLegacyStepsPreset) {
+                        // Fallback conversion for legacy presets
+                        const baseLayer = createDefaultLayer("Base Layer");
+                        baseLayer.steps = imported;
+                        layers = [baseLayer];
+                        renderLayers();
                         triggerDebouncedProcess();
                     } else {
-                        alert("Invalid preset file format. Each step must contain an 'id' and 'type'.");
+                        alert("Invalid preset file format. Must be a valid Layers stack or legacy pipeline.");
                     }
                 } else {
                     alert("Invalid preset file format. Preset must be a JSON array.");
@@ -1924,6 +2213,9 @@ function setupEventListeners() {
     if (closeErrorBtn) {
         closeErrorBtn.addEventListener('click', hidePipelineErrorOverlay);
     }
+    
+    // Initial layers stack rendering on load
+    renderLayers();
 }
 
 function handleUploadedFile(file) {
@@ -2008,10 +2300,10 @@ function processImage() {
     offCtx.drawImage(originalImage, 0, 0);
     const originalBase64 = offscreenCanvas.toDataURL('image/png');
     
-    // Pack the ordered pipeline steps to send to Flask OpenCV
+    // Pack the ordered layers stack to send to Flask OpenCV
     const params = {
         image: originalBase64,
-        pipeline: pipeline,
+        layers: layers,
         comparison_baseline: comparisonBaseline
     };
     

@@ -71,34 +71,14 @@
                     </div>
                 </section>
 
-                <!-- Processing Pipeline Section -->
+                <!-- Layers & Transformations Section -->
                 <section class="control-card">
-                    <h2 class="card-title">⚙️ Processing Pipeline</h2>
+                    <h2 class="card-title">🎛️ Layers & Transformations</h2>
                     
-                    <div class="control-group">
-                        <span class="control-label">Add Transformation</span>
-                        <div class="add-step-wrapper">
-                            <div class="select-wrapper" style="flex: 1;">
-                                <select id="select-new-step" class="custom-select">
-                                    <option value="grayscale">Convert to Grayscale</option>
-                                    <option value="contrast">Contrast & Brightness</option>
-                                    <option value="blur">Gaussian Blur</option>
-                                    <option value="threshold">Thresholding</option>
-                                    <option value="above_to_white">Above to White (Threshold)</option>
-                                    <option value="edges">Edge Detection (Sobel/Canny/Laplacian)</option>
-                                    <option value="edges_fill">Edge Detection + Fill (2-in-1)</option>
-                                    <option value="upsample">Upsampling (Scale Up)</option>
-                                    <option value="crop">Crop Region</option>
-                                    <option value="heal">Stroke Healing</option>
-                                    <option value="fill">Fill Region</option>
-                                </select>
-                            </div>
-                            <button id="add-step-btn" class="btn btn-primary btn-add-step">+</button>
-                        </div>
-                    </div>
+                    <button id="add-layer-btn" class="btn btn-primary" style="width: 100%;">➕ Add New Layer</button>
                     
-                    <div class="pipeline-list" id="pipeline-list">
-                        <!-- Active steps will be dynamically generated here by app.js -->
+                    <div class="layers-list" id="layers-list">
+                        <!-- Dynamic layer cards will be generated here by app.js -->
                     </div>
                 </section>
 

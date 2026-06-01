@@ -379,20 +379,10 @@ def apply_threshold(img, step):
         gray_val = int(0.299 * r + 0.587 * g + 0.114 * b)
         return apply_threshold_single(img, mode, val, gray_val, block_size, constant_c, sigma_x, sigma_y)
 
-def apply_edges(img, step):
-    if not isinstance(img, np.ndarray):
-        raise TypeError(f"img must be a numpy.ndarray. Got {type(img).__name__}")
-    verify_step_base(step)
+def _apply_edges_single_channel(gray, step, algo):
+    """Core edge detection on a single-channel (grayscale) image.
+    Validates algorithm-specific parameters and returns the edge map."""
     
-    if 'algorithm' not in step:
-        raise KeyError("Missing required parameter 'algorithm' for Edge Detection")
-    check_type(step['algorithm'], str, 'algorithm')
-    algo = step['algorithm']
-    check_one_of(algo, {'Canny', 'Sobel', 'Scharr', 'Laplacian'}, 'algorithm')
-    
-    if len(img.shape) > 2:
-        raise ValueError("Edge detection steps require a single-channel grayscale image. Please add a 'Convert to Grayscale' step prior to this step in the pipeline.")
-        
     if algo == 'Canny':
         required_canny = {'low', 'high', 'aperture', 'l2_gradient'}
         for k in required_canny:
@@ -412,7 +402,7 @@ def apply_edges(img, step):
         check_range(high, 0, 255, 'high')
         check_one_of(aperture, {3, 5, 7}, 'aperture')
         
-        return cv2.Canny(img, low, high, apertureSize=aperture, L2gradient=l2)
+        return cv2.Canny(gray, low, high, apertureSize=aperture, L2gradient=l2)
         
     elif algo == 'Sobel':
         required_sobel = {'dx', 'dy', 'ksize', 'scale', 'delta'}
@@ -446,7 +436,7 @@ def apply_edges(img, step):
             if dx >= ksize or dy >= ksize:
                 raise ValueError(f"For Sobel with ksize={ksize}, dx and dy must be less than ksize. Got dx={dx}, dy={dy}")
                 
-        sobel = cv2.Sobel(img, cv2.CV_16S, dx, dy, ksize=ksize, scale=scale, delta=delta)
+        sobel = cv2.Sobel(gray, cv2.CV_16S, dx, dy, ksize=ksize, scale=scale, delta=delta)
         return cv2.convertScaleAbs(sobel)
         
     elif algo == 'Scharr':
@@ -469,7 +459,7 @@ def apply_edges(img, step):
         if not ((dx == 1 and dy == 0) or (dx == 0 and dy == 1)):
             raise ValueError(f"Scharr filter only supports dx=1 dy=0 or dx=0 dy=1. Got dx={dx}, dy={dy}")
             
-        scharr = cv2.Scharr(img, cv2.CV_16S, dx, dy, scale=scale, delta=delta)
+        scharr = cv2.Scharr(gray, cv2.CV_16S, dx, dy, scale=scale, delta=delta)
         return cv2.convertScaleAbs(scharr)
         
     elif algo == 'Laplacian':
@@ -489,10 +479,42 @@ def apply_edges(img, step):
         
         check_one_of(ksize, {1, 3, 5, 7}, 'ksize')
         
-        laplacian = cv2.Laplacian(img, cv2.CV_16S, ksize=ksize, scale=scale, delta=delta)
+        laplacian = cv2.Laplacian(gray, cv2.CV_16S, ksize=ksize, scale=scale, delta=delta)
         return cv2.convertScaleAbs(laplacian)
         
-    return img
+    return gray
+
+def apply_edges(img, step):
+    if not isinstance(img, np.ndarray):
+        raise TypeError(f"img must be a numpy.ndarray. Got {type(img).__name__}")
+    verify_step_base(step)
+    
+    if 'algorithm' not in step:
+        raise KeyError("Missing required parameter 'algorithm' for Edge Detection")
+    check_type(step['algorithm'], str, 'algorithm')
+    algo = step['algorithm']
+    check_one_of(algo, {'Canny', 'Sobel', 'Scharr', 'Laplacian'}, 'algorithm')
+    
+    # Channel mode: 'Grayscale' (default) or 'Color Channels'
+    channel_mode = step.get('channel_mode', 'Grayscale')
+    check_one_of(channel_mode, {'Grayscale', 'Color Channels'}, 'channel_mode')
+    
+    is_color = len(img.shape) > 2
+    
+    if channel_mode == 'Color Channels' and is_color:
+        # Split into B, G, R channels, run edge detection on each, merge back
+        channels = cv2.split(img)
+        edge_channels = []
+        for ch in channels:
+            edge_channels.append(_apply_edges_single_channel(ch, step, algo))
+        return cv2.merge(edge_channels)
+    else:
+        # Grayscale mode: convert to gray if needed, run edge detection
+        if is_color:
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = img
+        return _apply_edges_single_channel(gray, step, algo)
 
 def apply_upsample(img, step):
     if not isinstance(img, np.ndarray):
@@ -1053,6 +1075,10 @@ def apply_edges_fill(img, step):
     
     edges_map = apply_edges(img, step)
     
+    # findContours requires single-channel input; if Color Channels mode produced a BGR edge map, convert it
+    if len(edges_map.shape) > 2:
+        edges_map = cv2.cvtColor(edges_map, cv2.COLOR_BGR2GRAY)
+    
     required_edge_fill = {'fill_target', 'color', 'min_area', 'max_area', 'draw_style', 'thickness'}
     for k in required_edge_fill:
         if k not in step: raise KeyError(f"Missing parameter '{k}' for Edge Fill")
@@ -1242,6 +1268,78 @@ PROCESSING_REGISTRY = {
     'above_to_white': apply_above_to_white
 }
 
+# ----------------- Layer Validation & Blending Helpers -----------------
+
+def verify_layer_base(layer):
+    if type(layer) is not dict:
+        raise TypeError(f"Layer must be a dict. Got {type(layer).__name__}")
+    
+    required_keys = {'id', 'name', 'input_source', 'blend_mode', 'blend_target', 'opacity', 'steps'}
+    for k in required_keys:
+        if k not in layer:
+            raise KeyError(f"Missing mandatory layer structural key: '{k}'")
+            
+    check_type(layer['id'], str, 'layer.id')
+    check_type(layer['name'], str, 'layer.name')
+    check_type(layer['input_source'], str, 'layer.input_source')
+    check_type(layer['blend_mode'], str, 'layer.blend_mode')
+    check_type(layer['blend_target'], str, 'layer.blend_target')
+    
+    if type(layer['opacity']) not in (int, float):
+        raise TypeError(f"Layer opacity must be int or float. Got {type(layer['opacity']).__name__}")
+    check_range(float(layer['opacity']), 0.0, 100.0, 'layer.opacity')
+    
+    if 'disabled' in layer:
+        check_type(layer['disabled'], bool, 'layer.disabled')
+        
+    if type(layer['steps']) is not list:
+        raise TypeError(f"Layer steps must be a list. Got {type(layer['steps']).__name__}")
+        
+    supported_blend_modes = {'normal', 'add', 'subtract', 'multiply', 'screen', 'difference', 'darken', 'lighten'}
+    check_one_of(layer['blend_mode'], supported_blend_modes, 'layer.blend_mode')
+
+def blend_images(target_img, src_img, blend_mode, opacity):
+    if not isinstance(target_img, np.ndarray):
+        raise TypeError(f"target_img must be a numpy.ndarray. Got {type(target_img).__name__}")
+    if not isinstance(src_img, np.ndarray):
+        raise TypeError(f"src_img must be a numpy.ndarray. Got {type(src_img).__name__}")
+    
+    # 1. Unify spatial dimensions (prevent crashes if crops/upsamples differ)
+    if src_img.shape[:2] != target_img.shape[:2]:
+        src_img = cv2.resize(src_img, (target_img.shape[1], target_img.shape[0]))
+    
+    # 2. Unify channel depths
+    if len(src_img.shape) == 2 and len(target_img.shape) == 3:
+        src_img = cv2.cvtColor(src_img, cv2.COLOR_GRAY2BGR)
+    elif len(src_img.shape) == 3 and len(target_img.shape) == 2:
+        src_img = cv2.cvtColor(src_img, cv2.COLOR_BGR2GRAY)
+        
+    # 3. Perform blend operation
+    if blend_mode == 'normal':
+        blended = src_img
+    elif blend_mode == 'add':
+        blended = cv2.add(target_img, src_img)
+    elif blend_mode == 'subtract':
+        blended = cv2.subtract(target_img, src_img)
+    elif blend_mode == 'multiply':
+        blended = cv2.multiply(target_img, src_img, scale=1.0/255.0)
+    elif blend_mode == 'screen':
+        blended = 255 - cv2.multiply(255 - target_img, 255 - src_img, scale=1.0/255.0)
+    elif blend_mode == 'difference':
+        blended = cv2.absdiff(target_img, src_img)
+    elif blend_mode == 'darken':
+        blended = cv2.min(target_img, src_img)
+    elif blend_mode == 'lighten':
+        blended = cv2.max(target_img, src_img)
+    else:
+        blended = src_img
+        
+    # 4. Apply opacity
+    alpha = float(opacity) / 100.0
+    if alpha < 1.0:
+        return cv2.addWeighted(blended, alpha, target_img, 1.0 - alpha, 0)
+    return blended
+
 # ----------------- Flask Routes -----------------
 
 @app.route('/')
@@ -1284,82 +1382,155 @@ def process():
     check_type(params['comparison_baseline'], str, 'comparison_baseline')
     comparison_baseline = params['comparison_baseline']
     
-    if 'pipeline' not in params:
-        raise KeyError("Missing structural parameter: 'pipeline'")
-    if type(params['pipeline']) is not list:
-        raise TypeError(f"Pipeline must be an array list. Got {type(params['pipeline']).__name__}")
-    pipeline_steps = params['pipeline']
+    # Support backward-compatible flat pipelines
+    if 'layers' in params:
+        if type(params['layers']) is not list:
+            raise TypeError(f"Layers must be an array list. Got {type(params['layers']).__name__}")
+        layers = params['layers']
+    elif 'pipeline' in params:
+        if type(params['pipeline']) is not list:
+            raise TypeError(f"Pipeline must be an array list. Got {type(params['pipeline']).__name__}")
+        layers = [{
+            'id': 'layer_legacy',
+            'name': 'Legacy Layer',
+            'disabled': False,
+            'input_source': 'original',
+            'blend_mode': 'normal',
+            'blend_target': 'previous',
+            'opacity': 100.0,
+            'steps': params['pipeline']
+        }]
+    else:
+        raise KeyError("Missing structural parameter: 'layers' or 'pipeline'")
+        
+    accumulated = img.copy()
+    layer_outputs = { "original": img.copy() }
     
-    processed = img.copy()
     baseline_img = None
     baseline_captured = False
     
-    for step in pipeline_steps:
-        verify_step_base(step)
-        step_id = step['id']
-        step_type = step['type']
-        is_disabled = step.get('disabled', False)
+    for layer in layers:
+        verify_layer_base(layer)
+        layer_id = layer['id']
+        layer_disabled = layer.get('disabled', False)
         
-        # Apply active step transformations to processed image
-        if not is_disabled:
-            if step_type not in PROCESSING_REGISTRY:
-                raise KeyError(f"Registry Mapping Miss: Operation type '{step_type}' is unknown.")
-            process_func = PROCESSING_REGISTRY[step_type]
-            
-            input_img = processed.copy()
-            processed = process_func(processed, step)
-            
-            # Universal Dry/Wet strength blend logic
-            if 'strength' in step:
-                # Type was checked in verify_step_base
-                strength = float(step['strength']) / 100.0
-                if strength < 1.0:
-                    if processed.shape == input_img.shape:
-                        processed = cv2.addWeighted(processed, strength, input_img, 1.0 - strength, 0)
-                    elif processed.shape[:2] == input_img.shape[:2]:
-                        # Spatial dimensions match, but channel depths differ (e.g. grayscale conversion, edges)
-                        proc_temp = processed.copy()
-                        in_temp = input_img.copy()
-                        if len(proc_temp.shape) == 2:
-                            proc_temp = cv2.cvtColor(proc_temp, cv2.COLOR_GRAY2BGR)
-                        if len(in_temp.shape) == 2:
-                            in_temp = cv2.cvtColor(in_temp, cv2.COLOR_GRAY2BGR)
-                        blended = cv2.addWeighted(proc_temp, strength, in_temp, 1.0 - strength, 0)
-                        if len(processed.shape) == 2:
-                            processed = cv2.cvtColor(blended, cv2.COLOR_BGR2GRAY)
-                        else:
-                            processed = blended
-        
-        # Capture baseline image AFTER this step (whether it was active or disabled/skipped)
-        if comparison_baseline == step_id:
-            baseline_img = processed.copy()
-            baseline_captured = True
-        elif baseline_captured and not is_disabled and step_type == 'crop':
-            # Apply subsequent active crops to the baseline image to keep coordinates and dimensions completely synchronized
-            process_func = PROCESSING_REGISTRY[step_type]
-            baseline_img = process_func(baseline_img, step)
+        # Determine Layer Input
+        input_src = layer['input_source']
+        if input_src == 'original':
+            layer_input = layer_outputs['original'].copy()
+        elif input_src == 'previous':
+            layer_input = accumulated.copy()
+        else:
+            if input_src in layer_outputs:
+                layer_input = layer_outputs[input_src].copy()
+            else:
+                raise KeyError(f"Registry Mapping Miss: Input source layer '{input_src}' is unknown or not processed yet.")
                 
-    # If the requested baseline step was never captured or is original, fall back to original with all active crops
-    if not baseline_captured or baseline_img is None:
-        baseline_img = img.copy()
-        for step in pipeline_steps:
+        if layer_disabled:
+            # If disabled, its output is just its input
+            layer_outputs[layer_id] = layer_input.copy()
+            
+            # Check if this layer's output was the baseline
+            if comparison_baseline == layer_id:
+                baseline_img = accumulated.copy()
+                baseline_captured = True
+            continue
+            
+        # Process active layer's nested steps
+        processed_layer = layer_input.copy()
+        for step in layer['steps']:
             verify_step_base(step)
-            if step.get('disabled', False):
-                continue
-            if step.get('type') == 'crop':
-                baseline_img = apply_crop(baseline_img, step)
+            step_id = step['id']
+            step_type = step['type']
+            step_disabled = step.get('disabled', False)
+            
+            if not step_disabled:
+                if step_type not in PROCESSING_REGISTRY:
+                    raise KeyError(f"Registry Mapping Miss: Operation type '{step_type}' is unknown.")
+                process_func = PROCESSING_REGISTRY[step_type]
+                
+                input_img = processed_layer.copy()
+                processed_layer = process_func(processed_layer, step)
+                
+                # Universal Dry/Wet strength blend logic
+                if 'strength' in step:
+                    strength = float(step['strength']) / 100.0
+                    if strength < 1.0:
+                        if processed_layer.shape == input_img.shape:
+                            processed_layer = cv2.addWeighted(processed_layer, strength, input_img, 1.0 - strength, 0)
+                        elif processed_layer.shape[:2] == input_img.shape[:2]:
+                            proc_temp = processed_layer.copy()
+                            in_temp = input_img.copy()
+                            if len(proc_temp.shape) == 2:
+                                proc_temp = cv2.cvtColor(proc_temp, cv2.COLOR_GRAY2BGR)
+                            if len(in_temp.shape) == 2:
+                                in_temp = cv2.cvtColor(in_temp, cv2.COLOR_GRAY2BGR)
+                            blended = cv2.addWeighted(proc_temp, strength, in_temp, 1.0 - strength, 0)
+                            if len(processed_layer.shape) == 2:
+                                processed_layer = cv2.cvtColor(blended, cv2.COLOR_BGR2GRAY)
+                            else:
+                                processed_layer = blended
+                                
+            # Capture step baseline if matched
+            if comparison_baseline == step_id:
+                baseline_img = processed_layer.copy()
+                baseline_captured = True
+                
+        # Resolve Layer Blending
+        blend_target_src = layer['blend_target']
+        if blend_target_src == 'previous':
+            target_img = accumulated.copy()
+        elif blend_target_src == 'original':
+            target_img = layer_outputs['original'].copy()
+        else:
+            if blend_target_src in layer_outputs:
+                target_img = layer_outputs[blend_target_src].copy()
+            else:
+                raise KeyError(f"Registry Mapping Miss: Blend target layer '{blend_target_src}' is unknown or not processed yet.")
+                
+        # Perform Blend
+        blend_mode = layer['blend_mode']
+        opacity = layer['opacity']
+        
+        blended_layer_result = blend_images(target_img, processed_layer, blend_mode, opacity)
+        
+        # Update accumulated and layer output maps
+        accumulated = blended_layer_result.copy()
+        layer_outputs[layer_id] = blended_layer_result.copy()
+        
+        # Capture layer baseline if matched
+        if comparison_baseline == layer_id:
+            baseline_img = accumulated.copy()
+            baseline_captured = True
+            
+    # Final processed image is accumulated output
+    processed = accumulated
     
-    # 3. Re-encode back to base64
-    _, buffer = cv2.imencode('.png', processed)
-    proc_b64 = base64.b64encode(buffer).decode('utf-8')
+    # Resolve comparison baseline fallback
+    if not baseline_captured or baseline_img is None:
+        baseline_img = layer_outputs['original'].copy()
+        
+    # Ensure baseline and processed have identical spatial dimensions for comparison view
+    if baseline_img.shape[:2] != processed.shape[:2]:
+        baseline_img = cv2.resize(baseline_img, (processed.shape[1], processed.shape[0]))
+    if len(baseline_img.shape) == 2 and len(processed.shape) == 3:
+        baseline_img = cv2.cvtColor(baseline_img, cv2.COLOR_GRAY2BGR)
+    elif len(baseline_img.shape) == 3 and len(processed.shape) == 2:
+        baseline_img = cv2.cvtColor(baseline_img, cv2.COLOR_BGR2GRAY)
+
+    _, processed_buf = cv2.imencode('.png', processed)
+    processed_b64 = base64.b64encode(processed_buf).decode('utf-8')
+    processed_url = f"data:image/png;base64,{processed_b64}"
     
-    _, orig_buffer = cv2.imencode('.png', baseline_img)
-    orig_b64 = base64.b64encode(orig_buffer).decode('utf-8')
+    _, baseline_buf = cv2.imencode('.png', baseline_img)
+    baseline_b64 = base64.b64encode(baseline_buf).decode('utf-8')
+    baseline_url = f"data:image/png;base64,{baseline_b64}"
     
     return jsonify({
-        'processed_image': f"data:image/png;base64,{proc_b64}",
-        'original_image': f"data:image/png;base64,{orig_b64}"
+        "processed_image": processed_url,
+        "original_image": baseline_url
     })
+
 
 # ----------------- Server Booting -----------------
 

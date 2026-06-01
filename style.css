@@ -651,7 +651,7 @@ input:checked + .slider-switch:before {
 
 .pipeline-card-header {
     background: rgba(255, 255, 255, 0.03);
-    padding: 10px 14px;
+    padding: 8px 8px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.04);
     display: flex;
     justify-content: space-between;
@@ -661,23 +661,23 @@ input:checked + .slider-switch:before {
 .pipeline-card-title {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 4px;
     min-width: 0;
     flex: 1;
 }
 
 .step-num {
     font-family: var(--font-mono);
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     background: rgba(255, 75, 75, 0.15);
     color: var(--primary-hover);
-    padding: 2px 6px;
+    padding: 2px 4px;
     border-radius: 4px;
     font-weight: bold;
 }
 
 .step-name {
-    font-size: 0.9rem;
+    font-size: 0.8rem;
     font-weight: 700;
     color: var(--text-main);
     white-space: nowrap;
@@ -689,7 +689,7 @@ input:checked + .slider-switch:before {
 
 .pipeline-card-actions {
     display: flex;
-    gap: 4px;
+    gap: 2px;
     flex-shrink: 0;
 }
 
@@ -919,3 +919,173 @@ input:checked + .slider-switch:before {
     padding-left: 8px;
     text-align: left;
 }
+
+/* ==========================================================================
+   Layers Stack Sidebar Styles
+   ========================================================================== */
+
+.layers-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin-top: 12px;
+}
+
+.layer-card {
+    background: rgba(30, 34, 45, 0.45);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    overflow: hidden;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.layer-card:hover {
+    border-color: rgba(255, 255, 255, 0.12);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.layer-card.active-layer {
+    border-color: var(--primary);
+    box-shadow: 0 0 10px rgba(255, 75, 75, 0.15);
+}
+
+.layer-card.disabled-layer {
+    opacity: 0.45;
+    background: rgba(20, 22, 28, 0.2);
+    border-style: dashed;
+}
+
+.layer-card-header {
+    background: rgba(255, 255, 255, 0.03);
+    padding: 10px 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    cursor: grab;
+}
+
+.layer-card-header:active {
+    cursor: grabbing;
+}
+
+.layer-drag-handle {
+    color: var(--text-disabled);
+    font-size: 0.85rem;
+    cursor: grab;
+    user-select: none;
+    padding: 0 2px;
+}
+
+.layer-title-input {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-main);
+    font-size: 0.85rem;
+    font-weight: 700;
+    width: 100%;
+    outline: none;
+    border-radius: 4px;
+    padding: 2px 4px;
+    transition: border-color 0.15s ease, background 0.15s ease;
+    flex: 1;
+    min-width: 0;
+    text-overflow: ellipsis;
+}
+
+.layer-title-input:focus {
+    border-color: rgba(255, 255, 255, 0.15);
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.layer-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+}
+
+.layer-card-body {
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.layer-properties-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.layer-properties-full {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.layer-nested-steps-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 4px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    padding-top: 8px;
+}
+
+.layer-nested-steps-header span {
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+}
+
+.layer-nested-steps-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 6px;
+    padding-left: 12px;
+    border-left: 2px dashed rgba(255, 255, 255, 0.15);
+    position: relative;
+    min-height: 20px;
+}
+
+.btn-add-step-mini {
+    padding: 4px 8px;
+    font-size: 0.75rem;
+    border-radius: 6px;
+    background: var(--secondary);
+    color: var(--text-main);
+    border: 1px solid var(--bg-card-border);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.btn-add-step-mini:hover {
+    background: var(--secondary-hover);
+    border-color: var(--primary);
+    color: var(--primary-hover);
+}
+
+.layer-card-body.collapsed {
+    display: none !important;
+}
+
+.layer-expand-btn {
+    transition: transform 0.2s ease;
+    font-size: 0.7rem;
+    font-weight: bold;
+}
+
+.layer-expand-btn.expanded {
+    /* transform: rotate(90deg); */
+}
+
+/* Connect step cards visually */
+.layer-nested-steps-list .pipeline-card {
+    background: rgba(44, 47, 58, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
