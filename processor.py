@@ -738,9 +738,10 @@ def apply_heal(img, step):
                 if k not in step: raise KeyError(f"Missing Heal parameter '{k}'")
                 
             check_type(step['shape'], str, 'shape')
-            check_type(step['kernel_x'], int, 'kernel_x')
-            check_type(step['kernel_y'], int, 'kernel_y')
+            check_odd_positive(step['kernel_x'], 'kernel_x')
+            check_odd_positive(step['kernel_y'], 'kernel_y')
             check_type(step['iterations'], int, 'iterations')
+            check_range(step['iterations'], 1, 100, 'iterations')
             
             shape_name = step['shape']
             kernel_x = step['kernel_x']
@@ -748,10 +749,6 @@ def apply_heal(img, step):
             iterations = step['iterations']
             
             check_one_of(shape_name, {'Rectangle', 'Ellipse', 'Cross'}, 'shape')
-            if kernel_x <= 0 or kernel_y <= 0:
-                raise ValueError(f"Heal kernel dimensions must be positive odd integers. Got ({kernel_x}, {kernel_y})")
-            if iterations <= 0:
-                raise ValueError(f"Heal iterations must be a positive integer. Got {iterations}")
                 
             shape_map = {
                 'Rectangle': cv2.MORPH_RECT,
@@ -780,8 +777,12 @@ def apply_heal(img, step):
                 
         # Remap output colors onto original image BGR space or grayscale space
         res = img.copy()
-        stroke_color = (fb, fg, fr) if is_color else int(0.299 * fr + 0.587 * fg + 0.114 * fb)
-        erase_color = (bb, bg_val, br) if is_color else int(0.299 * br + 0.587 * bg_val + 0.114 * bb)
+        if is_color:
+            stroke_color = np.array([fb, fg, fr], dtype=np.uint8)
+            erase_color = np.array([bb, bg_val, br], dtype=np.uint8)
+        else:
+            stroke_color = int(0.299 * fr + 0.587 * fg + 0.114 * fb)
+            erase_color = int(0.299 * br + 0.587 * bg_val + 0.114 * bb)
         
         # Erase shrunk pixels
         erased_pixels = (mask_u8 == 255) & (modified_mask == 0)
@@ -813,32 +814,61 @@ def apply_heal(img, step):
             'White strokes (Dark background)'
         }, 'foreground_mode')
         
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) > 2 else img.copy()
-        _, binary = cv2.threshold(gray, skel_threshold, 255, cv2.THRESH_BINARY)
-        
-        if foreground_mode == 'Black strokes (Light background)':
-            binary = cv2.bitwise_not(binary)
-            
-        size = np.size(binary)
-        skel = np.zeros(binary.shape, np.uint8)
-        element = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
-        done = False
-        
-        while not done:
-            eroded = cv2.erode(binary, element)
-            temp = cv2.dilate(eroded, element)
-            temp = cv2.subtract(binary, temp)
-            skel = cv2.bitwise_or(skel, temp)
-            binary = eroded.copy()
-            
-            zeros = size - cv2.countNonZero(binary)
-            if zeros == size:
-                done = True
+        if channel_mode == 'Color Channels' and len(img.shape) > 2:
+            channels = cv2.split(img)
+            skel_channels = []
+            for ch in channels:
+                _, binary = cv2.threshold(ch, skel_threshold, 255, cv2.THRESH_BINARY)
+                if foreground_mode == 'Black strokes (Light background)':
+                    binary = cv2.bitwise_not(binary)
+                    
+                size = np.size(binary)
+                skel_ch = np.zeros(binary.shape, np.uint8)
+                element = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+                done = False
                 
-        if foreground_mode == 'Black strokes (Light background)':
-            skel = cv2.bitwise_not(skel)
+                while not done:
+                    eroded = cv2.erode(binary, element)
+                    temp = cv2.dilate(eroded, element)
+                    temp = cv2.subtract(binary, temp)
+                    skel_ch = cv2.bitwise_or(skel_ch, temp)
+                    binary = eroded.copy()
+                    
+                    zeros = size - cv2.countNonZero(binary)
+                    if zeros == size:
+                        done = True
+                        
+                if foreground_mode == 'Black strokes (Light background)':
+                    skel_ch = cv2.bitwise_not(skel_ch)
+                skel_channels.append(skel_ch)
+            return cv2.merge(skel_channels)
+        else:
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) > 2 else img.copy()
+            _, binary = cv2.threshold(gray, skel_threshold, 255, cv2.THRESH_BINARY)
             
-        return skel
+            if foreground_mode == 'Black strokes (Light background)':
+                binary = cv2.bitwise_not(binary)
+                
+            size = np.size(binary)
+            skel = np.zeros(binary.shape, np.uint8)
+            element = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+            done = False
+            
+            while not done:
+                eroded = cv2.erode(binary, element)
+                temp = cv2.dilate(eroded, element)
+                temp = cv2.subtract(binary, temp)
+                skel = cv2.bitwise_or(skel, temp)
+                binary = eroded.copy()
+                
+                zeros = size - cv2.countNonZero(binary)
+                if zeros == size:
+                    done = True
+                    
+            if foreground_mode == 'Black strokes (Light background)':
+                skel = cv2.bitwise_not(skel)
+                
+            return skel
         
     else:
         required_heal = {'shape', 'kernel_x', 'kernel_y', 'iterations'}
@@ -846,9 +876,10 @@ def apply_heal(img, step):
             if k not in step: raise KeyError(f"Missing Heal parameter '{k}'")
             
         check_type(step['shape'], str, 'shape')
-        check_type(step['kernel_x'], int, 'kernel_x')
-        check_type(step['kernel_y'], int, 'kernel_y')
+        check_odd_positive(step['kernel_x'], 'kernel_x')
+        check_odd_positive(step['kernel_y'], 'kernel_y')
         check_type(step['iterations'], int, 'iterations')
+        check_range(step['iterations'], 1, 100, 'iterations')
         
         shape_name = step['shape']
         kernel_x = step['kernel_x']
@@ -856,10 +887,6 @@ def apply_heal(img, step):
         iterations = step['iterations']
         
         check_one_of(shape_name, {'Rectangle', 'Ellipse', 'Cross'}, 'shape')
-        if kernel_x <= 0 or kernel_y <= 0:
-            raise ValueError(f"Heal kernel dimensions must be positive odd integers. Got ({kernel_x}, {kernel_y})")
-        if iterations <= 0:
-            raise ValueError(f"Heal iterations must be a positive integer. Got {iterations}")
             
         shape_map = {
             'Rectangle': cv2.MORPH_RECT,

@@ -438,6 +438,7 @@ function setupEventListeners() {
                     newStep.target_color = '#ff0000';
                     newStep.tolerance = 30;
                     newStep.fill_color = '#000000';
+                    newStep.bg_color = '#ffffff';
                 } else if (stepType === 'invert') {
                     newStep.channel_mode = 'Color Channels';
                 } else if (stepType === 'downsample') {
@@ -612,7 +613,7 @@ function setupEventListeners() {
                 'mode', 'blur_type', 'algorithm', 'condition', 'operation', 
                 'fill_mode', 'use_target_color', 'foreground_mode', 'fill_target', 
                 'draw_style', 'l2_gradient', 'dx', 'dy', 'ksize', 'aperture', 
-                'interpolation', 'channel_mode'
+                'interpolation', 'channel_mode', 'shape'
             ];
             if (genericParams.includes(param)) {
                 // Parse boolean/number inputs where necessary
