@@ -521,6 +521,7 @@ function setupEventListeners() {
                     newStep.target_color = '#ff0000';
                     newStep.tolerance = 30;
                     newStep.fill_color = '#000000';
+                    newStep.bg_color = '#ffffff';
                 } else if (stepType === 'invert') {
                     newStep.channel_mode = 'Color Channels';
                 } else if (stepType === 'downsample') {
@@ -695,7 +696,7 @@ function setupEventListeners() {
                 'mode', 'blur_type', 'algorithm', 'condition', 'operation', 
                 'fill_mode', 'use_target_color', 'foreground_mode', 'fill_target', 
                 'draw_style', 'l2_gradient', 'dx', 'dy', 'ksize', 'aperture', 
-                'interpolation', 'channel_mode'
+                'interpolation', 'channel_mode', 'shape'
             ];
             if (genericParams.includes(param)) {
                 // Parse boolean/number inputs where necessary
@@ -1007,6 +1008,19 @@ function setupEventListeners() {
                 elements.compModeSelect.value = chosenMode;
                 elements.compModeSelect.dispatchEvent(new Event('change'));
             }
+        } else if (e.key === '[' || e.key === ']') {
+            e.preventDefault();
+            const targetPos = e.key === '[' ? 0 : 100;
+            state.compPosition = targetPos;
+            if (elements.compSlider) {
+                elements.compSlider.value = targetPos;
+                if (state.comparisonMode === "X-Ray Lens") {
+                    elements.compSliderVal.textContent = `${Math.round(targetPos * 2.5 + 40)}px`;
+                } else {
+                    elements.compSliderVal.textContent = `${targetPos}%`;
+                }
+            }
+            updateComparisonView();
         }
     });
 
