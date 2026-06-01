@@ -79,8 +79,9 @@ def apply_contrast(img, step):
     
     if 'contrast' not in step:
         raise KeyError("Missing required parameter 'contrast'")
-    check_type(step['contrast'], float, 'contrast')
-    contrast = step['contrast']
+    if type(step['contrast']) not in (int, float):
+        raise TypeError(f"Strict Type Violation: 'contrast' must be int or float. Got {type(step['contrast']).__name__}")
+    contrast = float(step['contrast'])
     
     if 'brightness' not in step:
         raise KeyError("Missing required parameter 'brightness'")
@@ -197,7 +198,8 @@ def apply_threshold_single(img, mode, val, fill_color, block_size, constant_c, s
         "Otsu's Thresholding", "Otsu's Thresholding Inverted",
         "Triangle Thresholding", "Triangle Thresholding Inverted",
         "Adaptive Mean", "Adaptive Mean Inverted",
-        "Adaptive Gaussian", "Adaptive Gaussian Inverted"
+        "Adaptive Gaussian", "Adaptive Gaussian Inverted",
+        "Single Color Thresholding", "Single Color Thresholding Inverted"
     }
     check_one_of(mode, supported_modes, 'mode')
 
@@ -286,7 +288,7 @@ def apply_threshold(img, step):
     
     check_one_of(channel_mode, {'Grayscale', 'Color Channels'}, 'channel_mode')
     
-    # Hex validation
+    # Hex validation for fill color
     if not fill_color_param.startswith('#') or len(fill_color_param) != 7:
         raise ValueError(f"fill_color must be a Hex string starting with '#' and length 7. Got '{fill_color_param}'")
         
@@ -297,12 +299,73 @@ def apply_threshold(img, step):
         b = int(hex_clean[4:6], 16)
     except Exception as hex_err:
         raise ValueError(f"Invalid Hex format in fill_color: '{fill_color_param}'. Error: {hex_err}")
+
+    # Single Color Thresholding custom logic
+    if mode in {"Single Color Thresholding", "Single Color Thresholding Inverted"}:
+        if 'target_color' not in step:
+            raise KeyError("Missing required parameter 'target_color' for Single Color Thresholding")
+        if 'tolerance' not in step:
+            raise KeyError("Missing required parameter 'tolerance' for Single Color Thresholding")
+            
+        check_type(step['target_color'], str, 'target_color')
+        check_type(step['tolerance'], int, 'tolerance')
+        check_range(step['tolerance'], 0, 255, 'tolerance')
+        
+        target_color_param = step['target_color']
+        if not target_color_param.startswith('#') or len(target_color_param) != 7:
+            raise ValueError(f"target_color must be a Hex string starting with '#' and length 7. Got '{target_color_param}'")
+            
+        try:
+            target_hex_clean = target_color_param.lstrip('#')
+            tr = int(target_hex_clean[0:2], 16)
+            tg = int(target_hex_clean[2:4], 16)
+            tb = int(target_hex_clean[4:6], 16)
+        except Exception as hex_err:
+            raise ValueError(f"Invalid Hex format in target_color: '{target_color_param}'. Error: {hex_err}")
+            
+        tolerance = step['tolerance']
+        
+        if channel_mode == 'Grayscale':
+            gray_target = int(0.299 * tr + 0.587 * tg + 0.114 * tb)
+            gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) > 2 else img
+            dist = cv2.absdiff(gray_img, np.uint8(gray_target))
+            match_mask = dist <= tolerance
+            
+            gray_val = int(0.299 * r + 0.587 * g + 0.114 * b)
+            if mode == "Single Color Thresholding":
+                res = np.where(match_mask, gray_val, 0).astype(np.uint8)
+            else:
+                res = np.where(match_mask, 0, gray_val).astype(np.uint8)
+            return res
+        else:
+            # Color Channels mode
+            if len(img.shape) > 2:
+                # Compute 3D Euclidean distance in BGR space
+                diff = img.astype(np.float32) - np.array([tb, tg, tr], dtype=np.float32)
+                dist = np.sqrt(np.sum(diff ** 2, axis=2))
+                match_mask = dist <= tolerance
+                
+                res = np.zeros_like(img)
+                if mode == "Single Color Thresholding":
+                    res[match_mask] = [b, g, r]
+                else:
+                    res[~match_mask] = [b, g, r]
+                return res
+            else:
+                # Single-channel grayscale input image (shape is 2D)
+                gray_target = int(0.299 * tr + 0.587 * tg + 0.114 * tb)
+                dist = cv2.absdiff(img, np.uint8(gray_target))
+                match_mask = dist <= tolerance
+                
+                gray_val = int(0.299 * r + 0.587 * g + 0.114 * b)
+                if mode == "Single Color Thresholding":
+                    res = np.where(match_mask, gray_val, 0).astype(np.uint8)
+                else:
+                    res = np.where(match_mask, 0, gray_val).astype(np.uint8)
+                return res
         
     if channel_mode == 'Grayscale' and len(img.shape) > 2:
-        raise ValueError("Grayscale channel mode requires a single-channel image. Please add a 'Convert to Grayscale' step prior to this Thresholding step in the pipeline.")
-        
-    if mode.startswith("Adaptive") and len(img.shape) > 2:
-        raise ValueError(f"Adaptive thresholding modes ('{mode}') require a single-channel grayscale image. Please add a 'Convert to Grayscale' step prior to this step in the pipeline.")
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
     if len(img.shape) > 2:
         channels = cv2.split(img)
@@ -510,73 +573,361 @@ def apply_heal(img, step):
         raise TypeError(f"img must be a numpy.ndarray. Got {type(img).__name__}")
     verify_step_base(step)
     
-    required_heal = {'operation', 'shape', 'kernel_x', 'kernel_y', 'iterations'}
-    for k in required_heal:
-        if k not in step: raise KeyError(f"Missing Heal parameter '{k}'")
-        
+    if 'operation' not in step: 
+        raise KeyError("Missing Heal parameter 'operation'")
     check_type(step['operation'], str, 'operation')
-    check_type(step['shape'], str, 'shape')
-    check_type(step['kernel_x'], int, 'kernel_x')
-    check_type(step['kernel_y'], int, 'kernel_y')
-    check_type(step['iterations'], int, 'iterations')
-    
     op_name = step['operation']
-    shape_name = step['shape']
-    kernel_x = step['kernel_x']
-    kernel_y = step['kernel_y']
-    iterations = step['iterations']
     
-    check_one_of(op_name, {
+    supported_ops = {
         'Dilate (Thicken White)', 'Erode (Thicken Black)',
-        'Heal Gaps in White (Closing)', 'Heal Gaps in Black (Opening)'
-    }, 'operation')
-    
-    check_one_of(shape_name, {'Rectangle', 'Ellipse', 'Cross'}, 'shape')
-    
-    if kernel_x <= 0 or kernel_y <= 0:
-        raise ValueError(f"Heal kernel dimensions must be positive odd integers. Got ({kernel_x}, {kernel_y})")
-    if iterations <= 0:
-        raise ValueError(f"Heal iterations must be a positive integer. Got {iterations}")
-        
-    shape_map = {
-        'Rectangle': cv2.MORPH_RECT,
-        'Ellipse': cv2.MORPH_ELLIPSE,
-        'Cross': cv2.MORPH_CROSS
+        'Heal Gaps in White (Closing)', 'Heal Gaps in Black (Opening)',
+        'Stroke Outlines (Gradient)', 'Extract Bright Details (Top Hat)',
+        'Extract Dark Details (Black Hat)', 'Skeletonization (Thinning)'
     }
-    shape = shape_map[shape_name]
-    element = cv2.getStructuringElement(shape, (kernel_x, kernel_y))
+    check_one_of(op_name, supported_ops, 'operation')
     
-    if op_name == 'Dilate (Thicken White)':
-        return cv2.dilate(img, element, iterations=iterations)
-    elif op_name == 'Erode (Thicken Black)':
-        return cv2.erode(img, element, iterations=iterations)
-    elif op_name == 'Heal Gaps in White (Closing)':
-        return cv2.morphologyEx(img, cv2.MORPH_CLOSE, element, iterations=iterations)
-    elif op_name == 'Heal Gaps in Black (Opening)':
-        return cv2.morphologyEx(img, cv2.MORPH_OPEN, element, iterations=iterations)
+    is_color = len(img.shape) > 2
+    
+    # Optional channel mode (default varies depending on operation)
+    default_channel_mode = 'Grayscale' if op_name == 'Skeletonization (Thinning)' else 'Color Channels'
+    channel_mode = step.get('channel_mode', default_channel_mode)
+    check_one_of(channel_mode, {'Color Channels', 'Grayscale'}, 'channel_mode')
+    
+    # Optional Color-Targeted Stroke Healing
+    use_target_color = step.get('use_target_color', False)
+    check_type(use_target_color, bool, 'use_target_color')
+    
+    if use_target_color:
+        # Validate targeted color parameters
+        required_color_keys = {'target_color', 'tolerance', 'fill_color'}
+        for k in required_color_keys:
+            if k not in step:
+                raise KeyError(f"Missing required parameter '{k}' for Color-Targeted Stroke Healing")
+                
+        check_type(step['target_color'], str, 'target_color')
+        check_type(step['tolerance'], int, 'tolerance')
+        check_range(step['tolerance'], 0, 255, 'tolerance')
+        check_type(step['fill_color'], str, 'fill_color')
         
-    return img
+        tolerance = step['tolerance']
+        
+        target_color_param = step['target_color']
+        fill_color_param = step['fill_color']
+        bg_color_param = step.get('bg_color', '#ffffff')
+        check_type(bg_color_param, str, 'bg_color')
+        
+        # Validate hex color strings
+        for color_str, name in [(target_color_param, 'target_color'), (fill_color_param, 'fill_color'), (bg_color_param, 'bg_color')]:
+            if not color_str.startswith('#') or len(color_str) != 7:
+                raise ValueError(f"'{name}' must be a Hex string starting with '#' and length 7. Got '{color_str}'")
+                
+        try:
+            target_hex = target_color_param.lstrip('#')
+            tr = int(target_hex[0:2], 16)
+            tg = int(target_hex[2:4], 16)
+            tb = int(target_hex[4:6], 16)
+            
+            fill_hex = fill_color_param.lstrip('#')
+            fr = int(fill_hex[0:2], 16)
+            fg = int(fill_hex[2:4], 16)
+            fb = int(fill_hex[4:6], 16)
+            
+            bg_hex = bg_color_param.lstrip('#')
+            br = int(bg_hex[0:2], 16)
+            bg_val = int(bg_hex[2:4], 16)
+            bb = int(bg_hex[4:6], 16)
+        except Exception as hex_err:
+            raise ValueError(f"Invalid Hex format in color parameters. Error: {hex_err}")
+            
+        # Target matching logic based on channel mode
+        if channel_mode == 'Grayscale' or not is_color:
+            gray_target = int(0.299 * tr + 0.587 * tg + 0.114 * tb)
+            gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if is_color else img
+            dist = cv2.absdiff(gray_img, np.uint8(gray_target))
+            match_mask = dist <= tolerance
+        else:
+            # Color Channels
+            diff = img.astype(np.float32) - np.array([tb, tg, tr], dtype=np.float32)
+            dist = np.sqrt(np.sum(diff ** 2, axis=2))
+            match_mask = dist <= tolerance
+            
+        # Prepare matching mask in uint8
+        mask_u8 = (match_mask.astype(np.uint8)) * 255
+        
+        # Apply morphology/skeletonization on the binary mask
+        if op_name == 'Skeletonization (Thinning)':
+            # Standard iterative thinning on the binary mask
+            size = np.size(mask_u8)
+            skel = np.zeros(mask_u8.shape, np.uint8)
+            element = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+            binary_temp = mask_u8.copy()
+            done = False
+            
+            while not done:
+                eroded = cv2.erode(binary_temp, element)
+                temp = cv2.dilate(eroded, element)
+                temp = cv2.subtract(binary_temp, temp)
+                skel = cv2.bitwise_or(skel, temp)
+                binary_temp = eroded.copy()
+                
+                zeros = size - cv2.countNonZero(binary_temp)
+                if zeros == size:
+                    done = True
+            modified_mask = skel
+        else:
+            # Standard morphology on binary mask
+            required_heal = {'shape', 'kernel_x', 'kernel_y', 'iterations'}
+            for k in required_heal:
+                if k not in step: raise KeyError(f"Missing Heal parameter '{k}'")
+                
+            check_type(step['shape'], str, 'shape')
+            check_type(step['kernel_x'], int, 'kernel_x')
+            check_type(step['kernel_y'], int, 'kernel_y')
+            check_type(step['iterations'], int, 'iterations')
+            
+            shape_name = step['shape']
+            kernel_x = step['kernel_x']
+            kernel_y = step['kernel_y']
+            iterations = step['iterations']
+            
+            check_one_of(shape_name, {'Rectangle', 'Ellipse', 'Cross'}, 'shape')
+            if kernel_x <= 0 or kernel_y <= 0:
+                raise ValueError(f"Heal kernel dimensions must be positive odd integers. Got ({kernel_x}, {kernel_y})")
+            if iterations <= 0:
+                raise ValueError(f"Heal iterations must be a positive integer. Got {iterations}")
+                
+            shape_map = {
+                'Rectangle': cv2.MORPH_RECT,
+                'Ellipse': cv2.MORPH_ELLIPSE,
+                'Cross': cv2.MORPH_CROSS
+            }
+            shape = shape_map[shape_name]
+            element = cv2.getStructuringElement(shape, (kernel_x, kernel_y))
+            
+            if op_name == 'Dilate (Thicken White)':
+                modified_mask = cv2.dilate(mask_u8, element, iterations=iterations)
+            elif op_name == 'Erode (Thicken Black)':
+                modified_mask = cv2.erode(mask_u8, element, iterations=iterations)
+            elif op_name == 'Heal Gaps in White (Closing)':
+                modified_mask = cv2.morphologyEx(mask_u8, cv2.MORPH_CLOSE, element, iterations=iterations)
+            elif op_name == 'Heal Gaps in Black (Opening)':
+                modified_mask = cv2.morphologyEx(mask_u8, cv2.MORPH_OPEN, element, iterations=iterations)
+            elif op_name == 'Stroke Outlines (Gradient)':
+                modified_mask = cv2.morphologyEx(mask_u8, cv2.MORPH_GRADIENT, element, iterations=iterations)
+            elif op_name == 'Extract Bright Details (Top Hat)':
+                modified_mask = cv2.morphologyEx(mask_u8, cv2.MORPH_TOPHAT, element, iterations=iterations)
+            elif op_name == 'Extract Dark Details (Black Hat)':
+                modified_mask = cv2.morphologyEx(mask_u8, cv2.MORPH_BLACKHAT, element, iterations=iterations)
+            else:
+                modified_mask = mask_u8
+                
+        # Remap output colors onto original image BGR space or grayscale space
+        res = img.copy()
+        stroke_color = (fb, fg, fr) if is_color else int(0.299 * fr + 0.587 * fg + 0.114 * fb)
+        erase_color = (bb, bg_val, br) if is_color else int(0.299 * br + 0.587 * bg_val + 0.114 * bb)
+        
+        # Erase shrunk pixels
+        erased_pixels = (mask_u8 == 255) & (modified_mask == 0)
+        res[erased_pixels] = erase_color
+        
+        # Draw modified stroke pixels
+        res[modified_mask == 255] = stroke_color
+        
+        return res
+
+    # Otherwise, standard legacy non-color-targeted operations
+    if channel_mode == 'Grayscale' and is_color:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        is_color = False
+
+    if op_name == 'Skeletonization (Thinning)':
+        if 'skel_threshold' not in step: raise KeyError("Missing Skeletonization parameter 'skel_threshold'")
+        if 'foreground_mode' not in step: raise KeyError("Missing Skeletonization parameter 'foreground_mode'")
+        
+        check_type(step['skel_threshold'], int, 'skel_threshold')
+        check_type(step['foreground_mode'], str, 'foreground_mode')
+        
+        skel_threshold = step['skel_threshold']
+        foreground_mode = step['foreground_mode']
+        
+        check_range(skel_threshold, 0, 255, 'skel_threshold')
+        check_one_of(foreground_mode, {
+            'Black strokes (Light background)', 
+            'White strokes (Dark background)'
+        }, 'foreground_mode')
+        
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) > 2 else img.copy()
+        _, binary = cv2.threshold(gray, skel_threshold, 255, cv2.THRESH_BINARY)
+        
+        if foreground_mode == 'Black strokes (Light background)':
+            binary = cv2.bitwise_not(binary)
+            
+        size = np.size(binary)
+        skel = np.zeros(binary.shape, np.uint8)
+        element = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+        done = False
+        
+        while not done:
+            eroded = cv2.erode(binary, element)
+            temp = cv2.dilate(eroded, element)
+            temp = cv2.subtract(binary, temp)
+            skel = cv2.bitwise_or(skel, temp)
+            binary = eroded.copy()
+            
+            zeros = size - cv2.countNonZero(binary)
+            if zeros == size:
+                done = True
+                
+        if foreground_mode == 'Black strokes (Light background)':
+            skel = cv2.bitwise_not(skel)
+            
+        return skel
+        
+    else:
+        required_heal = {'shape', 'kernel_x', 'kernel_y', 'iterations'}
+        for k in required_heal:
+            if k not in step: raise KeyError(f"Missing Heal parameter '{k}'")
+            
+        check_type(step['shape'], str, 'shape')
+        check_type(step['kernel_x'], int, 'kernel_x')
+        check_type(step['kernel_y'], int, 'kernel_y')
+        check_type(step['iterations'], int, 'iterations')
+        
+        shape_name = step['shape']
+        kernel_x = step['kernel_x']
+        kernel_y = step['kernel_y']
+        iterations = step['iterations']
+        
+        check_one_of(shape_name, {'Rectangle', 'Ellipse', 'Cross'}, 'shape')
+        if kernel_x <= 0 or kernel_y <= 0:
+            raise ValueError(f"Heal kernel dimensions must be positive odd integers. Got ({kernel_x}, {kernel_y})")
+        if iterations <= 0:
+            raise ValueError(f"Heal iterations must be a positive integer. Got {iterations}")
+            
+        shape_map = {
+            'Rectangle': cv2.MORPH_RECT,
+            'Ellipse': cv2.MORPH_ELLIPSE,
+            'Cross': cv2.MORPH_CROSS
+        }
+        shape = shape_map[shape_name]
+        element = cv2.getStructuringElement(shape, (kernel_x, kernel_y))
+        
+        if op_name == 'Dilate (Thicken White)':
+            return cv2.dilate(img, element, iterations=iterations)
+        elif op_name == 'Erode (Thicken Black)':
+            return cv2.erode(img, element, iterations=iterations)
+        elif op_name == 'Heal Gaps in White (Closing)':
+            return cv2.morphologyEx(img, cv2.MORPH_CLOSE, element, iterations=iterations)
+        elif op_name == 'Heal Gaps in Black (Opening)':
+            return cv2.morphologyEx(img, cv2.MORPH_OPEN, element, iterations=iterations)
+        elif op_name == 'Stroke Outlines (Gradient)':
+            return cv2.morphologyEx(img, cv2.MORPH_GRADIENT, element, iterations=iterations)
+        elif op_name == 'Extract Bright Details (Top Hat)':
+            return cv2.morphologyEx(img, cv2.MORPH_TOPHAT, element, iterations=iterations)
+        elif op_name == 'Extract Dark Details (Black Hat)':
+            return cv2.morphologyEx(img, cv2.MORPH_BLACKHAT, element, iterations=iterations)
+            
+        return img
 
 def apply_fill(img, step):
     if not isinstance(img, np.ndarray):
         raise TypeError(f"img must be a numpy.ndarray. Got {type(img).__name__}")
     verify_step_base(step)
     
-    if 'fill_mode' not in step: raise KeyError("Missing required parameter 'fill_mode'")
-    if 'color' not in step: raise KeyError("Missing required parameter 'color'")
-    
+    if 'fill_mode' not in step: 
+        raise KeyError("Missing required parameter 'fill_mode'")
     check_type(step['fill_mode'], str, 'fill_mode')
-    check_type(step['color'], int, 'color')
-    
     mode = step['fill_mode']
-    fill_color = step['color']
-    check_one_of(mode, {'Hole Filling (Contours)', 'Flood Fill', 'Corner Background Fill'}, 'fill_mode')
-    check_range(fill_color, 0, 255, 'color')
+    
+    supported_modes = {
+        'Hole Filling (Contours)', 
+        'Color Replacement (Chroma Key)', 
+        'Content-Aware Inpainting (NS)', 
+        'Content-Aware Inpainting (Telea)', 
+        'Flood Fill', 
+        'Corner Background Fill'
+    }
+    check_one_of(mode, supported_modes, 'fill_mode')
     
     is_color = len(img.shape) > 2
-    color_val = (fill_color, fill_color, fill_color) if is_color else fill_color
     channels = img.shape[2] if is_color else 1
     
+    # Backward compatibility: mapping old grayscale 'color' key to 'fill_color' Hex format
+    requires_fill_color = mode not in {'Content-Aware Inpainting (NS)', 'Content-Aware Inpainting (Telea)'}
+    if requires_fill_color:
+        if 'fill_color' not in step and 'color' in step:
+            check_type(step['color'], int, 'color')
+            c = step['color']
+            check_range(c, 0, 255, 'color')
+            step['fill_color'] = f"#{c:02x}{c:02x}{c:02x}"
+            
+        if 'fill_color' not in step:
+            raise KeyError(f"Missing required parameter 'fill_color' for {mode}")
+            
+        check_type(step['fill_color'], str, 'fill_color')
+        fill_color_param = step['fill_color']
+        
+        # Hex validation for fill color
+        if not fill_color_param.startswith('#') or len(fill_color_param) != 7:
+            raise ValueError(f"fill_color must be a Hex string starting with '#' and length 7. Got '{fill_color_param}'")
+            
+        try:
+            hex_clean = fill_color_param.lstrip('#')
+            fr = int(hex_clean[0:2], 16)
+            fg = int(hex_clean[2:4], 16)
+            fb = int(hex_clean[4:6], 16)
+        except Exception as hex_err:
+            raise ValueError(f"Invalid Hex format in fill_color: '{fill_color_param}'. Error: {hex_err}")
+            
+        color_val = (fb, fg, fr) if is_color else int(0.299 * fr + 0.587 * fg + 0.114 * fb)
+        
+    # Check if target color matching should be performed
+    use_target_color = False
+    if mode in {'Color Replacement (Chroma Key)', 'Content-Aware Inpainting (NS)', 'Content-Aware Inpainting (Telea)'}:
+        use_target_color = True
+    elif mode == 'Hole Filling (Contours)' and step.get('use_target_color', False) is True:
+        use_target_color = True
+        
+    if use_target_color:
+        if 'target_color' not in step:
+            raise KeyError(f"Missing required parameter 'target_color' for {mode}")
+        if 'tolerance' not in step:
+            raise KeyError(f"Missing required parameter 'tolerance' for {mode}")
+            
+        check_type(step['target_color'], str, 'target_color')
+        check_type(step['tolerance'], int, 'tolerance')
+        check_range(step['tolerance'], 0, 255, 'tolerance')
+        
+        target_color_param = step['target_color']
+        if not target_color_param.startswith('#') or len(target_color_param) != 7:
+            raise ValueError(f"target_color must be a Hex string starting with '#' and length 7. Got '{target_color_param}'")
+            
+        try:
+            target_hex_clean = target_color_param.lstrip('#')
+            tr = int(target_hex_clean[0:2], 16)
+            tg = int(target_hex_clean[2:4], 16)
+            tb = int(target_hex_clean[4:6], 16)
+        except Exception as hex_err:
+            raise ValueError(f"Invalid Hex format in target_color: '{target_color_param}'. Error: {hex_err}")
+            
+        tolerance = step['tolerance']
+        
+        channel_mode = step.get('channel_mode', 'Color Channels')
+        check_one_of(channel_mode, {'Grayscale', 'Color Channels'}, 'channel_mode')
+        
+        # Compute matching mask
+        if channel_mode == 'Grayscale' or not is_color:
+            gray_target = int(0.299 * tr + 0.587 * tg + 0.114 * tb)
+            gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if is_color else img
+            dist = cv2.absdiff(gray_img, np.uint8(gray_target))
+            match_mask = dist <= tolerance
+        else:
+            # Compute 3D Euclidean distance in BGR space
+            diff = img.astype(np.float32) - np.array([tb, tg, tr], dtype=np.float32)
+            dist = np.sqrt(np.sum(diff ** 2, axis=2))
+            match_mask = dist <= tolerance
+
+    # Apply specific algorithm
     if mode == 'Hole Filling (Contours)':
         if 'min_area' not in step: raise KeyError("Missing 'min_area' for Hole Filling")
         if 'max_area' not in step: raise KeyError("Missing 'max_area' for Hole Filling")
@@ -594,7 +945,11 @@ def apply_fill(img, step):
         if min_area > max_area:
             raise ValueError(f"min_area must be <= max_area. Got min={min_area}, max={max_area}")
             
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if is_color else img.copy()
+        if use_target_color:
+            gray = match_mask.astype(np.uint8) * 255
+        else:
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if is_color else img.copy()
+            
         contours, _ = cv2.findContours(gray, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
         
         res = img.copy()
@@ -603,6 +958,27 @@ def apply_fill(img, step):
             if min_area <= area <= max_area:
                 cv2.drawContours(res, [c], -1, color_val, thickness=cv2.FILLED)
         return res
+        
+    elif mode == 'Color Replacement (Chroma Key)':
+        res = img.copy()
+        if is_color:
+            res[match_mask] = color_val
+        else:
+            res[match_mask] = color_val
+        return res
+        
+    elif mode in {'Content-Aware Inpainting (NS)', 'Content-Aware Inpainting (Telea)'}:
+        if 'inpaint_radius' not in step:
+            raise KeyError(f"Missing 'inpaint_radius' for {mode}")
+        check_type(step['inpaint_radius'], int, 'inpaint_radius')
+        inpaint_radius = step['inpaint_radius']
+        if inpaint_radius <= 0:
+            raise ValueError(f"inpaint_radius must be positive. Got {inpaint_radius}")
+            
+        flags = cv2.INPAINT_NS if mode == 'Content-Aware Inpainting (NS)' else cv2.INPAINT_TELEA
+        mask_u8 = (match_mask.astype(np.uint8)) * 255
+        
+        return cv2.inpaint(img, mask_u8, inpaint_radius, flags)
         
     elif mode == 'Flood Fill':
         if 'seed_x' not in step: raise KeyError("Missing 'seed_x' for Flood Fill")
@@ -636,7 +1012,11 @@ def apply_fill(img, step):
             
         res = img.copy()
         mask = np.zeros((h + 2, w + 2), np.uint8)
-        cv2.floodFill(res, mask, (seed_x, seed_y), color_val, (lo_diff,)*channels, (up_diff,)*channels)
+        
+        diff_val = (lo_diff,) * channels
+        up_val = (up_diff,) * channels
+        
+        cv2.floodFill(res, mask, (seed_x, seed_y), color_val, diff_val, up_val)
         return res
         
     elif mode == 'Corner Background Fill':
@@ -785,16 +1165,13 @@ def apply_above_to_white(img, step):
     except Exception as hex_err:
         raise ValueError(f"Invalid Hex format in fill_color: '{fill_color_param}'. Error: {hex_err}")
         
-    if channel_mode == 'Grayscale' or len(img.shape) == 2:
+    if channel_mode == 'Grayscale' and len(img.shape) > 2:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        
+    if len(img.shape) == 2:
         fill_color = int(0.299 * r + 0.587 * g + 0.114 * b)
     else:
-        fill_color = (b, g, r)
-        
-    if channel_mode == 'Grayscale' and len(img.shape) > 2:
-        raise ValueError("Grayscale channel mode requires a single-channel image. Please add a 'Convert to Grayscale' step prior to this step.")
-        
-    if algo.startswith("Adaptive") and len(img.shape) > 2:
-        raise ValueError(f"Adaptive thresholding algorithms ('{algo}') require a single-channel grayscale image. Please add a 'Convert to Grayscale' step prior to this step.")
+        fill_color = np.array([b, g, r], dtype=np.uint8)
         
     def apply_thresh_condition(source, threshold):
         if condition == 'Below (<)':

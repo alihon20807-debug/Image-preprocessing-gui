@@ -401,6 +401,7 @@ function createPipelineCardElement(step, index) {
         const isGlobal = ['Binary Thresholding', 'Binary Thresholding Inverted', 'Truncate Thresholding', 'Threshold to Zero', 'Threshold to Zero Inverted'].includes(step.mode);
         const isAdaptive = ['Adaptive Mean', 'Adaptive Mean Inverted', 'Adaptive Gaussian', 'Adaptive Gaussian Inverted'].includes(step.mode);
         const isAuto = ["Otsu's Thresholding", "Otsu's Thresholding Inverted", 'Triangle Thresholding', 'Triangle Thresholding Inverted'].includes(step.mode);
+        const isSingleColor = ['Single Color Thresholding', 'Single Color Thresholding Inverted'].includes(step.mode);
         const hasConstantC = isAdaptive || isAuto;
         const hasSigmas = ['Adaptive Gaussian', 'Adaptive Gaussian Inverted'].includes(step.mode);
         
@@ -422,6 +423,8 @@ function createPipelineCardElement(step, index) {
                         <option value="Adaptive Mean Inverted" ${step.mode === 'Adaptive Mean Inverted' ? 'selected' : ''}>Adaptive Mean (Inverted)</option>
                         <option value="Adaptive Gaussian" ${step.mode === 'Adaptive Gaussian' ? 'selected' : ''}>Adaptive Gaussian</option>
                         <option value="Adaptive Gaussian Inverted" ${step.mode === 'Adaptive Gaussian Inverted' ? 'selected' : ''}>Adaptive Gaussian (Inverted)</option>
+                        <option value="Single Color Thresholding" ${step.mode === 'Single Color Thresholding' ? 'selected' : ''}>Single Color Thresholding</option>
+                        <option value="Single Color Thresholding Inverted" ${step.mode === 'Single Color Thresholding Inverted' ? 'selected' : ''}>Single Color (Inverted)</option>
                     </select>
                 </div>
             </div>
@@ -439,6 +442,20 @@ function createPipelineCardElement(step, index) {
             <div class="control-group">
                 <span class="control-label">Target Fill Color</span>
                 <input type="color" class="custom-color-picker" data-param="fill_color" value="${step.fill_color}" style="width: 100%; height: 36px; border: none; border-radius: 6px; cursor: pointer; background: transparent; padding: 0;">
+            </div>
+            
+            <!-- Target Color and Tolerance (Single Color Thresholding only) -->
+            <div class="control-group" id="grp-thresh-target-color-${step.id}" style="display: ${isSingleColor ? 'block' : 'none'}">
+                <span class="control-label">Match Target Color</span>
+                <input type="color" class="custom-color-picker" data-param="target_color" value="${step.target_color || '#000000'}" style="width: 100%; height: 36px; border: none; border-radius: 6px; cursor: pointer; background: transparent; padding: 0;">
+            </div>
+            
+            <div class="control-group" id="grp-thresh-tolerance-${step.id}" style="display: ${isSingleColor ? 'block' : 'none'}">
+                <div class="slider-header">
+                    <span class="control-label">Match Tolerance</span>
+                    <span class="slider-value" id="val-thresh-tolerance-${step.id}">${step.tolerance !== undefined ? step.tolerance : 30}</span>
+                </div>
+                <input type="range" class="custom-range" data-param="tolerance" min="0" max="255" step="1" value="${step.tolerance !== undefined ? step.tolerance : 30}">
             </div>
             
             <!-- Global Threshold Value Slider -->
@@ -465,7 +482,7 @@ function createPipelineCardElement(step, index) {
                     <span class="control-label">Constant C Offset</span>
                     <span class="slider-value" id="val-thresh-c-${step.id}">${step.constant_c >= 0 ? '+' + step.constant_c : step.constant_c}</span>
                 </div>
-                <input type="range" class="custom-range" data-param="constant_c" min="-30" max="30" step="1" value="${step.constant_c}">
+                <input type="range" class="custom-range" data-param="constant_c" min="-100" max="100" step="1" value="${step.constant_c}">
             </div>
             
             <!-- Gaussian Blur Sigmas -->
@@ -580,7 +597,7 @@ function createPipelineCardElement(step, index) {
                     <span class="control-label">Constant C Offset</span>
                     <span class="slider-value" id="val-above-to-white-c-${step.id}">${step.constant_c >= 0 ? '+' + step.constant_c : step.constant_c}</span>
                 </div>
-                <input type="range" class="custom-range" data-param="constant_c" min="-30" max="30" step="1" value="${step.constant_c}">
+                <input type="range" class="custom-range" data-param="constant_c" min="-100" max="100" step="1" value="${step.constant_c}">
             </div>
             
             <!-- Gaussian Blur Sigmas -->
@@ -600,7 +617,7 @@ function createPipelineCardElement(step, index) {
                     <input type="range" class="custom-range" data-param="sigma_y" min="0" max="10" step="0.5" value="${step.sigma_y}">
                 </div>
             </div>
-        `;;
+        `;
     } else if (step.type === 'edges') {
         bodyHtml = `
             <div class="control-group">
@@ -864,7 +881,7 @@ function createPipelineCardElement(step, index) {
                         <span class="control-label">Min Area Size</span>
                         <span class="slider-value" id="val-fill-minarea-${step.id}">${step.min_area}px</span>
                     </div>
-                    <input type="range" class="custom-range" data-param="min_area" min="0" max="2000" step="10" value="${step.min_area}">
+                    <input type="range" class="custom-range" data-param="min_area" min="0" max="2000" step="1" value="${step.min_area}">
                 </div>
                 
                 <div class="control-group" style="margin-bottom: 0;">
@@ -872,7 +889,7 @@ function createPipelineCardElement(step, index) {
                         <span class="control-label">Max Area Size</span>
                         <span class="slider-value" id="val-fill-maxarea-${step.id}">${step.max_area}px</span>
                     </div>
-                    <input type="range" class="custom-range" data-param="max_area" min="100" max="50000" step="100" value="${step.max_area}">
+                    <input type="range" class="custom-range" data-param="max_area" min="0" max="50000" step="1" value="${step.max_area}">
                 </div>
             </div>
         `;
@@ -929,6 +946,8 @@ function createPipelineCardElement(step, index) {
             </div>
         `;
     } else if (step.type === 'heal') {
+        const isSkeletonization = step.operation === 'Skeletonization (Thinning)';
+        
         bodyHtml = `
             <div class="control-group">
                 <span class="control-label">Operation</span>
@@ -938,10 +957,79 @@ function createPipelineCardElement(step, index) {
                         <option value="Heal Gaps in Black (Opening)" ${step.operation === 'Heal Gaps in Black (Opening)' ? 'selected' : ''}>Heal Gaps in Black (Opening)</option>
                         <option value="Dilate (Thicken White)" ${step.operation === 'Dilate (Thicken White)' ? 'selected' : ''}>Dilate (Thicken White)</option>
                         <option value="Erode (Thicken Black)" ${step.operation === 'Erode (Thicken Black)' ? 'selected' : ''}>Erode (Thicken Black)</option>
+                        <option value="Stroke Outlines (Gradient)" ${step.operation === 'Stroke Outlines (Gradient)' ? 'selected' : ''}>Stroke Outlines (Gradient)</option>
+                        <option value="Extract Bright Details (Top Hat)" ${step.operation === 'Extract Bright Details (Top Hat)' ? 'selected' : ''}>Extract Bright Details (Top Hat)</option>
+                        <option value="Extract Dark Details (Black Hat)" ${step.operation === 'Extract Dark Details (Black Hat)' ? 'selected' : ''}>Extract Dark Details (Black Hat)</option>
+                        <option value="Skeletonization (Thinning)" ${step.operation === 'Skeletonization (Thinning)' ? 'selected' : ''}>Skeletonization (Thinning)</option>
                     </select>
                 </div>
             </div>
+            
             <div class="control-group">
+                <span class="control-label">Channel Mode</span>
+                <div class="select-wrapper">
+                    <select class="custom-select" data-param="channel_mode">
+                        <option value="Color Channels" ${step.channel_mode === 'Color Channels' ? 'selected' : ''}>Color Channels</option>
+                        <option value="Grayscale" ${step.channel_mode === 'Grayscale' ? 'selected' : ''}>Grayscale Mode</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="control-group">
+                <div class="toggle-container">
+                    <span class="control-label" style="font-size: 0.85rem; opacity: 0.9;">Filter by Target Color</span>
+                    <label class="switch">
+                        <input type="checkbox" data-param="use_target_color" ${step.use_target_color ? 'checked' : ''}>
+                        <span class="slider-switch"></span>
+                    </label>
+                </div>
+            </div>
+            
+            ${step.use_target_color ? `
+            <div class="control-group" style="border-top: 1px dashed rgba(255,255,255,0.06); padding-top: 12px; margin-top: 4px;">
+                <span class="control-label">Match Target Color</span>
+                <input type="color" class="custom-color-picker" data-param="target_color" value="${step.target_color || '#ff0000'}" style="width: 100%; height: 36px; border: none; border-radius: 6px; cursor: pointer; background: transparent; padding: 0;">
+            </div>
+            
+            <div class="control-group">
+                <div class="slider-header">
+                    <span class="control-label">Match Tolerance</span>
+                    <span class="slider-value" id="val-heal-tolerance-${step.id}">${step.tolerance !== undefined ? step.tolerance : 30}</span>
+                </div>
+                <input type="range" class="custom-range" data-param="tolerance" min="0" max="255" step="1" value="${step.tolerance !== undefined ? step.tolerance : 30}">
+            </div>
+            
+            <div class="control-group">
+                <span class="control-label">Stroke Output Color</span>
+                <input type="color" class="custom-color-picker" data-param="fill_color" value="${step.fill_color || '#000000'}" style="width: 100%; height: 36px; border: none; border-radius: 6px; cursor: pointer; background: transparent; padding: 0;">
+            </div>
+            
+            <div class="control-group" style="margin-bottom: 8px;">
+                <span class="control-label">Background Erase Color</span>
+                <input type="color" class="custom-color-picker" data-param="bg_color" value="${step.bg_color || '#ffffff'}" style="width: 100%; height: 36px; border: none; border-radius: 6px; cursor: pointer; background: transparent; padding: 0;">
+            </div>
+            ` : ''}
+            
+            ${isSkeletonization ? `
+            <div class="control-group" style="border-top: 1px dashed rgba(255,255,255,0.06); padding-top: 12px; margin-top: 4px;">
+                <span class="control-label">Foreground Mode</span>
+                <div class="select-wrapper">
+                    <select class="custom-select" data-param="foreground_mode">
+                        <option value="Black strokes (Light background)" ${step.foreground_mode === 'Black strokes (Light background)' ? 'selected' : ''}>Black strokes (Light background)</option>
+                        <option value="White strokes (Dark background)" ${step.foreground_mode === 'White strokes (Dark background)' ? 'selected' : ''}>White strokes (Dark background)</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="control-group">
+                <div class="slider-header">
+                    <span class="control-label">Binarization Threshold</span>
+                    <span class="slider-value" id="val-heal-threshold-${step.id}">${step.skel_threshold !== undefined ? step.skel_threshold : 127}</span>
+                </div>
+                <input type="range" class="custom-range" data-param="skel_threshold" min="0" max="255" step="1" value="${step.skel_threshold !== undefined ? step.skel_threshold : 127}">
+            </div>
+            ` : `
+            <div class="control-group" style="border-top: 1px dashed rgba(255,255,255,0.06); padding-top: 12px; margin-top: 4px;">
                 <span class="control-label">Kernel Shape</span>
                 <div class="select-wrapper">
                     <select class="custom-select" data-param="shape">
@@ -956,14 +1044,14 @@ function createPipelineCardElement(step, index) {
                     <span class="control-label">Kernel Width (X)</span>
                     <span class="slider-value" id="val-heal-kernel-x-${step.id}">${step.kernel_x}px</span>
                 </div>
-                <input type="range" class="custom-range" data-param="kernel_x" min="1" max="21" step="1" value="${step.kernel_x}">
+                <input type="range" class="custom-range" data-param="kernel_x" min="1" max="25" step="2" value="${step.kernel_x}">
             </div>
             <div class="control-group">
                 <div class="slider-header">
                     <span class="control-label">Kernel Height (Y)</span>
                     <span class="slider-value" id="val-heal-kernel-y-${step.id}">${step.kernel_y}px</span>
                 </div>
-                <input type="range" class="custom-range" data-param="kernel_y" min="1" max="21" step="1" value="${step.kernel_y}">
+                <input type="range" class="custom-range" data-param="kernel_y" min="1" max="25" step="2" value="${step.kernel_y}">
             </div>
             <div class="control-group">
                 <div class="slider-header">
@@ -972,48 +1060,110 @@ function createPipelineCardElement(step, index) {
                 </div>
                 <input type="range" class="custom-range" data-param="iterations" min="1" max="5" step="1" value="${step.iterations}">
             </div>
+            `}
         `;
     } else if (step.type === 'fill') {
+        const isHoleFilling = step.fill_mode === 'Hole Filling (Contours)';
+        const isChromaKey = step.fill_mode === 'Color Replacement (Chroma Key)';
+        const isInpainting = step.fill_mode === 'Content-Aware Inpainting (NS)' || step.fill_mode === 'Content-Aware Inpainting (Telea)';
+        const isFloodFill = step.fill_mode === 'Flood Fill';
+        const isCornerFill = step.fill_mode === 'Corner Background Fill';
+        
+        const hasFillColor = !isInpainting;
+        const hasTargetColor = isChromaKey || isInpainting || (isHoleFilling && step.use_target_color);
+        const hasInpaintRadius = isInpainting;
+        const hasFloodTolerances = isFloodFill || isCornerFill;
+        
         bodyHtml = `
             <div class="control-group">
                 <span class="control-label">Fill Mode</span>
                 <div class="select-wrapper">
                     <select class="custom-select" data-param="fill_mode">
                         <option value="Hole Filling (Contours)" ${step.fill_mode === 'Hole Filling (Contours)' ? 'selected' : ''}>Hole Filling (Contours)</option>
+                        <option value="Color Replacement (Chroma Key)" ${step.fill_mode === 'Color Replacement (Chroma Key)' ? 'selected' : ''}>Color Replacement (Chroma Key)</option>
+                        <option value="Content-Aware Inpainting (NS)" ${step.fill_mode === 'Content-Aware Inpainting (NS)' ? 'selected' : ''}>Content-Aware Inpainting (NS)</option>
+                        <option value="Content-Aware Inpainting (Telea)" ${step.fill_mode === 'Content-Aware Inpainting (Telea)' ? 'selected' : ''}>Content-Aware Inpainting (Telea)</option>
                         <option value="Flood Fill" ${step.fill_mode === 'Flood Fill' ? 'selected' : ''}>Flood Fill</option>
                         <option value="Corner Background Fill" ${step.fill_mode === 'Corner Background Fill' ? 'selected' : ''}>Corner Background Fill</option>
                     </select>
                 </div>
             </div>
             
+            ${hasFillColor ? `
             <div class="control-group">
-                <div class="slider-header">
-                    <span class="control-label">Fill Color Grayscale</span>
-                    <span class="slider-value" id="val-fill-color-${step.id}">${step.color}</span>
+                <span class="control-label">Target Fill Color</span>
+                <input type="color" class="custom-color-picker" data-param="fill_color" value="${step.fill_color || '#ffffff'}" style="width: 100%; height: 36px; border: none; border-radius: 6px; cursor: pointer; background: transparent; padding: 0;">
+            </div>
+            ` : ''}
+            
+            ${isHoleFilling ? `
+            <div class="control-group">
+                <div class="toggle-container">
+                    <span class="control-label" style="font-size: 0.85rem; opacity: 0.9;">Filter by Target Color</span>
+                    <label class="switch">
+                        <input type="checkbox" data-param="use_target_color" ${step.use_target_color ? 'checked' : ''}>
+                        <span class="slider-switch"></span>
+                    </label>
                 </div>
-                <input type="range" class="custom-range" data-param="color" min="0" max="255" step="1" value="${step.color}">
+            </div>
+            ` : ''}
+            
+            ${hasTargetColor ? `
+            <div class="control-group" style="border-top: 1px dashed rgba(255,255,255,0.06); padding-top: 12px; margin-top: 4px;">
+                <span class="control-label">Match Target Color</span>
+                <input type="color" class="custom-color-picker" data-param="target_color" value="${step.target_color || '#000000'}" style="width: 100%; height: 36px; border: none; border-radius: 6px; cursor: pointer; background: transparent; padding: 0;">
             </div>
             
-            <!-- Contour Hole Filling specific parameters -->
-            <div class="control-group" id="grp-fill-contours-${step.id}" style="display: ${step.fill_mode === 'Hole Filling (Contours)' ? 'block' : 'none'}">
+            <div class="control-group">
+                <div class="slider-header">
+                    <span class="control-label">Match Tolerance</span>
+                    <span class="slider-value" id="val-fill-tolerance-${step.id}">${step.tolerance !== undefined ? step.tolerance : 30}</span>
+                </div>
+                <input type="range" class="custom-range" data-param="tolerance" min="0" max="255" step="1" value="${step.tolerance !== undefined ? step.tolerance : 30}">
+            </div>
+            
+            <div class="control-group" style="margin-bottom: 8px;">
+                <span class="control-label">Channel Mode</span>
+                <div class="select-wrapper">
+                    <select class="custom-select" data-param="channel_mode">
+                        <option value="Color Channels" ${step.channel_mode === 'Color Channels' ? 'selected' : ''}>Color Channels</option>
+                        <option value="Grayscale" ${step.channel_mode === 'Grayscale' ? 'selected' : ''}>Grayscale Mode</option>
+                    </select>
+                </div>
+            </div>
+            ` : ''}
+            
+            ${isHoleFilling ? `
+            <div class="control-group" style="border-top: 1px dashed rgba(255,255,255,0.06); padding-top: 12px; margin-top: 4px;">
                 <div class="control-group" style="margin-bottom: 12px;">
                     <div class="slider-header">
                         <span class="control-label">Min Contour Area</span>
                         <span class="slider-value" id="val-fill-minarea-${step.id}">${step.min_area}px</span>
                     </div>
-                    <input type="range" class="custom-range" data-param="min_area" min="0" max="2000" step="10" value="${step.min_area}">
+                    <input type="range" class="custom-range" data-param="min_area" min="0" max="2000" step="1" value="${step.min_area}">
                 </div>
                 <div class="control-group" style="margin-bottom: 0;">
                     <div class="slider-header">
                         <span class="control-label">Max Contour Area</span>
                         <span class="slider-value" id="val-fill-maxarea-${step.id}">${step.max_area}px</span>
                     </div>
-                    <input type="range" class="custom-range" data-param="max_area" min="100" max="50000" step="100" value="${step.max_area}">
+                    <input type="range" class="custom-range" data-param="max_area" min="0" max="50000" step="1" value="${step.max_area}">
                 </div>
             </div>
+            ` : ''}
             
-            <!-- Flood Fill specific parameters -->
-            <div class="control-group" id="grp-fill-flood-${step.id}" style="display: ${step.fill_mode === 'Flood Fill' ? 'block' : 'none'}">
+            ${hasInpaintRadius ? `
+            <div class="control-group">
+                <div class="slider-header">
+                    <span class="control-label">Inpaint Neighborhood Radius</span>
+                    <span class="slider-value" id="val-fill-inpaint-radius-${step.id}">${step.inpaint_radius || 3}px</span>
+                </div>
+                <input type="range" class="custom-range" data-param="inpaint_radius" min="1" max="50" step="1" value="${step.inpaint_radius || 3}">
+            </div>
+            ` : ''}
+            
+            ${isFloodFill ? `
+            <div class="control-group" style="border-top: 1px dashed rgba(255,255,255,0.06); padding-top: 12px; margin-top: 4px;">
                 <div class="control-group" style="margin-bottom: 12px;">
                     <div class="slider-header">
                         <span class="control-label">Seed X Coord (%)</span>
@@ -1029,24 +1179,26 @@ function createPipelineCardElement(step, index) {
                     <input type="range" class="custom-range" data-param="seed_y" min="0" max="100" step="1" value="${step.seed_y}">
                 </div>
             </div>
+            ` : ''}
             
-            <!-- Tolerances for Flood Fill & Corner Background Fill -->
-            <div class="control-group" id="grp-fill-tolerances-${step.id}" style="display: ${step.fill_mode !== 'Hole Filling (Contours)' ? 'block' : 'none'}">
+            ${hasFloodTolerances ? `
+            <div class="control-group" style="border-top: 1px dashed rgba(255,255,255,0.06); padding-top: 12px; margin-top: 4px;">
                 <div class="control-group" style="margin-bottom: 12px;">
                     <div class="slider-header">
                         <span class="control-label">Lower Bound Tolerance</span>
                         <span class="slider-value" id="val-fill-lodiff-${step.id}">${step.lo_diff}</span>
                     </div>
-                    <input type="range" class="custom-range" data-param="lo_diff" min="0" max="100" step="1" value="${step.lo_diff}">
+                    <input type="range" class="custom-range" data-param="lo_diff" min="0" max="255" step="1" value="${step.lo_diff}">
                 </div>
                 <div class="control-group" style="margin-bottom: 0;">
                     <div class="slider-header">
                         <span class="control-label">Upper Bound Tolerance</span>
                         <span class="slider-value" id="val-fill-updiff-${step.id}">${step.up_diff}</span>
                     </div>
-                    <input type="range" class="custom-range" data-param="up_diff" min="0" max="100" step="1" value="${step.up_diff}">
+                    <input type="range" class="custom-range" data-param="up_diff" min="0" max="255" step="1" value="${step.up_diff}">
                 </div>
             </div>
+            ` : ''}
         `;
     }
     
@@ -1263,6 +1415,8 @@ function setupEventListeners() {
             newStep.channel_mode = 'Grayscale';
             newStep.sigma_x = 0;
             newStep.sigma_y = 0;
+            newStep.target_color = '#000000';
+            newStep.tolerance = 30;
         } else if (type === 'above_to_white') {
             newStep.algorithm = 'Global';
             newStep.value = 127;
@@ -1307,12 +1461,18 @@ function setupEventListeners() {
         } else if (type === 'fill') {
             newStep.fill_mode = 'Hole Filling (Contours)';
             newStep.color = 255;
+            newStep.fill_color = '#ffffff';
+            newStep.use_target_color = false;
+            newStep.target_color = '#000000';
+            newStep.tolerance = 30;
             newStep.min_area = 0;
             newStep.max_area = 10000;
             newStep.seed_x = 50;
             newStep.seed_y = 50;
             newStep.lo_diff = 20;
             newStep.up_diff = 20;
+            newStep.inpaint_radius = 3;
+            newStep.channel_mode = 'Color Channels';
         } else if (type === 'upsample') {
             newStep.scale = 2.0;
             newStep.interpolation = 'Bicubic (Sharp)';
@@ -1327,6 +1487,14 @@ function setupEventListeners() {
             newStep.kernel_x = 3;
             newStep.kernel_y = 3;
             newStep.iterations = 1;
+            newStep.channel_mode = 'Color Channels';
+            newStep.skel_threshold = 127;
+            newStep.foreground_mode = 'Black strokes (Light background)';
+            newStep.use_target_color = false;
+            newStep.target_color = '#ff0000';
+            newStep.tolerance = 30;
+            newStep.fill_color = '#000000';
+            newStep.bg_color = '#ffffff';
         }
         
         pipeline.push(newStep);
@@ -1392,7 +1560,7 @@ function setupEventListeners() {
         if (!step) return;
         
         const param = e.target.dataset.param;
-        const val = e.target.value;
+        const val = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
         
         if (param) {
             if (param === 'step_strength') {
@@ -1447,6 +1615,11 @@ function setupEventListeners() {
                     document.getElementById(`val-thresh-c-${id}`).textContent = step.constant_c >= 0 ? `+${step.constant_c}` : step.constant_c;
                 } else if (param === 'fill_color') {
                     step.fill_color = val;
+                } else if (param === 'target_color') {
+                    step.target_color = val;
+                } else if (param === 'tolerance') {
+                    step.tolerance = parseInt(val);
+                    document.getElementById(`val-thresh-tolerance-${id}`).textContent = step.tolerance;
                 } else if (param === 'sigma_x') {
                     step.sigma_x = parseFloat(val);
                     document.getElementById(`val-thresh-sigmax-${id}`).textContent = step.sigma_x.toFixed(1);
@@ -1540,39 +1713,82 @@ function setupEventListeners() {
             } else if (step.type === 'heal') {
                 if (param === 'kernel_x') {
                     step.kernel_x = parseInt(val);
-                    document.getElementById(`val-heal-kernel-x-${id}`).textContent = `${step.kernel_x}px`;
+                    const el = document.getElementById(`val-heal-kernel-x-${id}`);
+                    if (el) el.textContent = `${step.kernel_x}px`;
                 } else if (param === 'kernel_y') {
                     step.kernel_y = parseInt(val);
-                    document.getElementById(`val-heal-kernel-y-${id}`).textContent = `${step.kernel_y}px`;
+                    const el = document.getElementById(`val-heal-kernel-y-${id}`);
+                    if (el) el.textContent = `${step.kernel_y}px`;
                 } else if (param === 'iterations') {
                     step.iterations = parseInt(val);
-                    document.getElementById(`val-heal-iterations-${id}`).textContent = step.iterations;
+                    const el = document.getElementById(`val-heal-iterations-${id}`);
+                    if (el) el.textContent = step.iterations;
+                } else if (param === 'skel_threshold') {
+                    step.skel_threshold = parseInt(val);
+                    const el = document.getElementById(`val-heal-threshold-${id}`);
+                    if (el) el.textContent = step.skel_threshold;
+                } else if (param === 'use_target_color') {
+                    step.use_target_color = val;
+                    renderPipeline();
+                } else if (param === 'target_color') {
+                    step.target_color = val;
+                } else if (param === 'tolerance') {
+                    step.tolerance = parseInt(val);
+                    const el = document.getElementById(`val-heal-tolerance-${id}`);
+                    if (el) el.textContent = step.tolerance;
+                } else if (param === 'fill_color') {
+                    step.fill_color = val;
+                } else if (param === 'bg_color') {
+                    step.bg_color = val;
                 }
             } else if (step.type === 'fill' || step.type === 'edges_fill') {
                 if (param === 'color') {
                     step.color = parseInt(val);
-                    document.getElementById(`val-fill-color-${id}`).textContent = step.color;
+                    const el = document.getElementById(`val-fill-color-${id}`);
+                    if (el) el.textContent = step.color;
+                } else if (param === 'fill_color') {
+                    step.fill_color = val;
+                } else if (param === 'target_color') {
+                    step.target_color = val;
+                } else if (param === 'use_target_color') {
+                    step.use_target_color = val;
+                    renderPipeline();
+                } else if (param === 'tolerance') {
+                    step.tolerance = parseInt(val);
+                    const el = document.getElementById(`val-fill-tolerance-${id}`);
+                    if (el) el.textContent = step.tolerance;
+                } else if (param === 'inpaint_radius') {
+                    step.inpaint_radius = parseInt(val);
+                    const el = document.getElementById(`val-fill-inpaint-radius-${id}`);
+                    if (el) el.textContent = `${step.inpaint_radius}px`;
                 } else if (param === 'thickness') {
                     step.thickness = parseInt(val);
-                    document.getElementById(`val-fill-thickness-${id}`).textContent = `${step.thickness}px`;
+                    const el = document.getElementById(`val-fill-thickness-${id}`);
+                    if (el) el.textContent = `${step.thickness}px`;
                 } else if (param === 'min_area') {
                     step.min_area = parseInt(val);
-                    document.getElementById(`val-fill-minarea-${id}`).textContent = `${step.min_area}px`;
+                    const el = document.getElementById(`val-fill-minarea-${id}`);
+                    if (el) el.textContent = `${step.min_area}px`;
                 } else if (param === 'max_area') {
                     step.max_area = parseInt(val);
-                    document.getElementById(`val-fill-maxarea-${id}`).textContent = `${step.max_area}px`;
+                    const el = document.getElementById(`val-fill-maxarea-${id}`);
+                    if (el) el.textContent = `${step.max_area}px`;
                 } else if (param === 'seed_x') {
                     step.seed_x = parseInt(val);
-                    document.getElementById(`val-fill-seedx-${id}`).textContent = `${step.seed_x}%`;
+                    const el = document.getElementById(`val-fill-seedx-${id}`);
+                    if (el) el.textContent = `${step.seed_x}%`;
                 } else if (param === 'seed_y') {
                     step.seed_y = parseInt(val);
-                    document.getElementById(`val-fill-seedy-${id}`).textContent = `${step.seed_y}%`;
+                    const el = document.getElementById(`val-fill-seedy-${id}`);
+                    if (el) el.textContent = `${step.seed_y}%`;
                 } else if (param === 'lo_diff') {
                     step.lo_diff = parseInt(val);
-                    document.getElementById(`val-fill-lodiff-${id}`).textContent = step.lo_diff;
+                    const el = document.getElementById(`val-fill-lodiff-${id}`);
+                    if (el) el.textContent = step.lo_diff;
                 } else if (param === 'up_diff') {
                     step.up_diff = parseInt(val);
-                    document.getElementById(`val-fill-updiff-${id}`).textContent = step.up_diff;
+                    const el = document.getElementById(`val-fill-updiff-${id}`);
+                    if (el) el.textContent = step.up_diff;
                 }
             }
             triggerDebouncedProcess();
@@ -1628,6 +1844,10 @@ function setupEventListeners() {
             triggerDebouncedProcess();
         } else if (param === 'operation') {
             step.operation = e.target.value;
+            renderPipeline();
+            triggerDebouncedProcess();
+        } else if (param === 'foreground_mode') {
+            step.foreground_mode = e.target.value;
             triggerDebouncedProcess();
         } else if (param === 'shape') {
             step.shape = e.target.value;

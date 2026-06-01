@@ -662,6 +662,8 @@ input:checked + .slider-switch:before {
     display: flex;
     align-items: center;
     gap: 8px;
+    min-width: 0;
+    flex: 1;
 }
 
 .step-num {
@@ -678,11 +680,17 @@ input:checked + .slider-switch:before {
     font-size: 0.9rem;
     font-weight: 700;
     color: var(--text-main);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+    flex: 1;
 }
 
 .pipeline-card-actions {
     display: flex;
     gap: 4px;
+    flex-shrink: 0;
 }
 
 .action-btn {
@@ -704,6 +712,12 @@ input:checked + .slider-switch:before {
 .action-btn:hover {
     background: rgba(255, 255, 255, 0.08);
     color: white;
+}
+
+.action-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    pointer-events: none;
 }
 
 .action-btn.btn-delete:hover {
