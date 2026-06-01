@@ -18,6 +18,7 @@ let mouseWrapperY = 0;
 // Dynamic Layers builder state
 let layers = []; // Holds dynamic structured layers
 let comparisonBaseline = "original"; // ID of step/layer for baseline comparison, or "original"
+let originalImageUploaded = false; // Tracks if the original image has been cached on the backend
 
 function createDefaultLayer(name = "New Layer") {
     return {
@@ -86,6 +87,7 @@ function loadImage(src) {
     originalImage.onload = function () {
         originalWidth = originalImage.width;
         originalHeight = originalImage.height;
+        originalImageUploaded = false; // Reset image upload state for backend cache synchronization
         
         // Initialize canvases sizes
         originalCanvas.width = originalWidth;
@@ -424,6 +426,17 @@ function createLayerCardElement(layer, index) {
                     <span class="slider-value value-layer-opacity" style="font-size: 11px;">${layer.opacity}%</span>
                 </div>
                 <input type="range" class="custom-range slider-layer-opacity" min="0" max="100" step="5" value="${layer.opacity}" style="height: 4px;">
+            </div>
+            
+            <!-- Invert Layer Toggle -->
+            <div class="control-group" style="gap: 4px;">
+                <div class="toggle-container">
+                    <span class="control-label" style="font-size: 11px; opacity: 0.9;">Invert Layer Output</span>
+                    <label class="switch">
+                        <input type="checkbox" class="checkbox-layer-invert" ${layer.invert ? 'checked' : ''}>
+                        <span class="slider-switch"></span>
+                    </label>
+                </div>
             </div>
             
             <!-- Transformations List -->
@@ -1870,6 +1883,20 @@ function setupEventListeners() {
             return;
         }
         
+        // B2. Layer Invert Checkbox
+        if (e.target.classList.contains('checkbox-layer-invert')) {
+            const layerCard = e.target.closest('.layer-card');
+            if (layerCard) {
+                const layerId = layerCard.dataset.id;
+                const layer = layers.find(l => l.id === layerId);
+                if (layer) {
+                    layer.invert = e.target.checked;
+                    triggerDebouncedProcess();
+                }
+            }
+            return;
+        }
+        
         // C. Step parameter sliders/inputs
         const card = e.target.closest('.pipeline-card');
         if (!card) return;
@@ -1987,25 +2014,14 @@ function setupEventListeners() {
                 } else if (param === 'delta') {
                     step.delta = parseInt(val);
                     document.getElementById(`val-edges-delta-${id}`).textContent = step.delta >= 0 ? `+${step.delta}` : step.delta;
-                } else if (param === 'fill_color') {
-                    step.fill_color = val;
-                } else if (param === 'target_color') {
-                    step.target_color = val;
-                } else if (param === 'use_target_color') {
-                    step.use_target_color = val;
-                    renderLayers();
-                } else if (param === 'tolerance') {
-                    step.tolerance = parseInt(val);
-                    const el = document.getElementById(`val-fill-tolerance-${id}`);
-                    if (el) el.textContent = step.tolerance;
-                } else if (param === 'inpaint_radius') {
-                    step.inpaint_radius = parseInt(val);
-                    const el = document.getElementById(`val-fill-inpaint-radius-${id}`);
-                    if (el) el.textContent = `${step.inpaint_radius}px`;
                 } else if (param === 'thickness') {
                     step.thickness = parseInt(val);
                     const el = document.getElementById(`val-fill-thickness-${id}`);
                     if (el) el.textContent = `${step.thickness}px`;
+                } else if (param === 'color') {
+                    step.color = parseInt(val);
+                    const el = document.getElementById(`val-fill-color-${id}`);
+                    if (el) el.textContent = step.color;
                 } else if (param === 'min_area') {
                     step.min_area = parseInt(val);
                     const el = document.getElementById(`val-fill-minarea-${id}`);
@@ -2014,6 +2030,31 @@ function setupEventListeners() {
                     step.max_area = parseInt(val);
                     const el = document.getElementById(`val-fill-maxarea-${id}`);
                     if (el) el.textContent = `${step.max_area}px`;
+                }
+            } else if (step.type === 'fill') {
+                if (param === 'fill_color') {
+                    step.fill_color = val;
+                } else if (param === 'use_target_color') {
+                    step.use_target_color = val;
+                    renderLayers();
+                } else if (param === 'target_color') {
+                    step.target_color = val;
+                } else if (param === 'tolerance') {
+                    step.tolerance = parseInt(val);
+                    const el = document.getElementById(`val-fill-tolerance-${id}`);
+                    if (el) el.textContent = step.tolerance;
+                } else if (param === 'min_area') {
+                    step.min_area = parseInt(val);
+                    const el = document.getElementById(`val-fill-minarea-${id}`);
+                    if (el) el.textContent = `${step.min_area}px`;
+                } else if (param === 'max_area') {
+                    step.max_area = parseInt(val);
+                    const el = document.getElementById(`val-fill-maxarea-${id}`);
+                    if (el) el.textContent = `${step.max_area}px`;
+                } else if (param === 'inpaint_radius') {
+                    step.inpaint_radius = parseInt(val);
+                    const el = document.getElementById(`val-fill-inpaint-radius-${id}`);
+                    if (el) el.textContent = `${step.inpaint_radius}px`;
                 } else if (param === 'seed_x') {
                     step.seed_x = parseInt(val);
                     const el = document.getElementById(`val-fill-seedx-${id}`);
@@ -2030,6 +2071,61 @@ function setupEventListeners() {
                     step.up_diff = parseInt(val);
                     const el = document.getElementById(`val-fill-updiff-${id}`);
                     if (el) el.textContent = step.up_diff;
+                }
+            } else if (step.type === 'heal') {
+                if (param === 'use_target_color') {
+                    step.use_target_color = val;
+                    renderLayers();
+                } else if (param === 'target_color') {
+                    step.target_color = val;
+                } else if (param === 'tolerance') {
+                    step.tolerance = parseInt(val);
+                    const el = document.getElementById(`val-heal-tolerance-${id}`);
+                    if (el) el.textContent = step.tolerance;
+                } else if (param === 'fill_color') {
+                    step.fill_color = val;
+                } else if (param === 'bg_color') {
+                    step.bg_color = val;
+                } else if (param === 'skel_threshold') {
+                    step.skel_threshold = parseInt(val);
+                    const el = document.getElementById(`val-heal-threshold-${id}`);
+                    if (el) el.textContent = step.skel_threshold;
+                } else if (param === 'kernel_x') {
+                    step.kernel_x = parseInt(val);
+                    const el = document.getElementById(`val-heal-kernel-x-${id}`);
+                    if (el) el.textContent = `${step.kernel_x}px`;
+                } else if (param === 'kernel_y') {
+                    step.kernel_y = parseInt(val);
+                    const el = document.getElementById(`val-heal-kernel-y-${id}`);
+                    if (el) el.textContent = `${step.kernel_y}px`;
+                } else if (param === 'iterations') {
+                    step.iterations = parseInt(val);
+                    const el = document.getElementById(`val-heal-iterations-${id}`);
+                    if (el) el.textContent = step.iterations;
+                }
+            } else if (step.type === 'upsample') {
+                if (param === 'scale') {
+                    step.scale = parseFloat(val);
+                    const el = document.getElementById(`val-upsample-scale-${id}`);
+                    if (el) el.textContent = `${step.scale.toFixed(1)}x`;
+                }
+            } else if (step.type === 'crop') {
+                if (param === 'left') {
+                    step.left = parseInt(val);
+                    const el = document.getElementById(`val-crop-left-${id}`);
+                    if (el) el.textContent = `${step.left}%`;
+                } else if (param === 'right') {
+                    step.right = parseInt(val);
+                    const el = document.getElementById(`val-crop-right-${id}`);
+                    if (el) el.textContent = `${step.right}%`;
+                } else if (param === 'top') {
+                    step.top = parseInt(val);
+                    const el = document.getElementById(`val-crop-top-${id}`);
+                    if (el) el.textContent = `${step.top}%`;
+                } else if (param === 'bottom') {
+                    step.bottom = parseInt(val);
+                    const el = document.getElementById(`val-crop-bottom-${id}`);
+                    if (el) el.textContent = `${step.bottom}%`;
                 }
             }
             triggerDebouncedProcess();
@@ -2230,7 +2326,7 @@ function handleUploadedFile(file) {
 function updatePixelInspector(x, y) {
     statusCoords.textContent = `X: ${x}, Y: ${y}`;
     
-    const displayCtx = processedCanvas.getContext('2d');
+    const displayCtx = processedCanvas.getContext('2d', { willReadFrequently: true });
     try {
         const upsampleScale = originalCanvas.width > 0 ? processedCanvas.width / originalCanvas.width : 1.0;
         const px = Math.round(x * upsampleScale);
@@ -2295,11 +2391,14 @@ function processImage() {
     
     isProcessing = true;
     
-    // Export original canvas to base64
-    const offCtx = offscreenCanvas.getContext('2d');
-    offCtx.clearRect(0, 0, originalWidth, originalHeight);
-    offCtx.drawImage(originalImage, 0, 0);
-    const originalBase64 = offscreenCanvas.toDataURL('image/png');
+    // Export original canvas to base64 only if it has not been cached on backend yet
+    let originalBase64 = "cached";
+    if (!originalImageUploaded) {
+        const offCtx = offscreenCanvas.getContext('2d');
+        offCtx.clearRect(0, 0, originalWidth, originalHeight);
+        offCtx.drawImage(originalImage, 0, 0);
+        originalBase64 = offscreenCanvas.toDataURL('image/png');
+    }
     
     // Pack the ordered layers stack to send to Flask OpenCV
     const params = {
@@ -2320,12 +2419,14 @@ function processImage() {
             let errType = 'Server Error';
             let errMsg = 'An unhandled exception occurred on the backend.';
             let errTrace = '';
+            let requireReupload = false;
             
             try {
                 const data = await response.json();
                 if (data.error_type) errType = data.error_type;
                 if (data.message) errMsg = data.message;
                 if (data.traceback) errTrace = data.traceback;
+                if (data.require_reupload) requireReupload = data.require_reupload;
             } catch (jsonErr) {
                 try {
                     const text = await response.text();
@@ -2333,6 +2434,14 @@ function processImage() {
                 } catch (txtErr) {
                     errTrace = 'Could not read error response.';
                 }
+            }
+            
+            if (requireReupload) {
+                // Backend cache missed (e.g. server restarted). Force re-upload.
+                originalImageUploaded = false;
+                isProcessing = false;
+                processImage();
+                throw new Error('Image cache miss. Retrying upload...');
             }
             
             showPipelineErrorOverlay(errType, errMsg, errTrace);
@@ -2345,13 +2454,15 @@ function processImage() {
         hidePipelineErrorOverlay();
         
         if (result.processed_image && result.original_image) {
+            // Mark original image as successfully cached on server
+            originalImageUploaded = true;
+            
             const loadProc = new Promise((resolve) => {
-                const img = new Image();
-                img.onload = () => resolve(img);
-                img.src = params.image === result.original_image ? originalImage.src : result.original_image; // optimized check
-                if (img.src.startsWith('data:image')) {
-                    // direct assign
+                if (result.original_image === "original") {
+                    resolve(originalImage);
                 } else {
+                    const img = new Image();
+                    img.onload = () => resolve(img);
                     img.src = result.original_image;
                 }
             });
@@ -2362,17 +2473,27 @@ function processImage() {
             });
             
             Promise.all([loadProcImg, loadProc]).then(([procImg, origImg]) => {
-                // Resize and draw original
-                originalCanvas.width = origImg.width;
-                originalCanvas.height = origImg.height;
+                // Draw original canvas ONLY if size changes or we loaded a non-static baseline
                 const ogCtx = originalCanvas.getContext('2d');
-                ogCtx.clearRect(0, 0, origImg.width, origImg.height);
-                ogCtx.drawImage(origImg, 0, 0);
+                if (originalCanvas.width !== origImg.width || originalCanvas.height !== origImg.height) {
+                    originalCanvas.width = origImg.width;
+                    originalCanvas.height = origImg.height;
+                    ogCtx.imageSmoothingEnabled = false;
+                    ogCtx.clearRect(0, 0, origImg.width, origImg.height);
+                    ogCtx.drawImage(origImg, 0, 0);
+                } else if (result.original_image !== "original") {
+                    ogCtx.imageSmoothingEnabled = false;
+                    ogCtx.clearRect(0, 0, origImg.width, origImg.height);
+                    ogCtx.drawImage(origImg, 0, 0);
+                }
                 
-                // Resize and draw processed
-                processedCanvas.width = procImg.width;
-                processedCanvas.height = procImg.height;
+                // Draw processed canvas ONLY if size changes or draw updates
                 const procCtx = processedCanvas.getContext('2d');
+                if (processedCanvas.width !== procImg.width || processedCanvas.height !== procImg.height) {
+                    processedCanvas.width = procImg.width;
+                    processedCanvas.height = procImg.height;
+                }
+                procCtx.imageSmoothingEnabled = false;
                 procCtx.clearRect(0, 0, procImg.width, procImg.height);
                 procCtx.drawImage(procImg, 0, 0);
                 
