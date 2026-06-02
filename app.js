@@ -24,6 +24,7 @@ import {
 let isGraphInitialized = false;
 let graph = null;
 let lCanvas = null;
+let lastDrawnBaseline = null;
 
 function initNodeGraph() {
     if (isGraphInitialized) {
@@ -122,6 +123,7 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 function loadImage(src) {
+    lastDrawnBaseline = null;
     state.originalImage = new Image();
     state.originalImage.crossOrigin = "anonymous";
     state.originalImage.onload = function () {
@@ -704,6 +706,18 @@ function setupEventListeners() {
     if (btnStudio && btnNode && sidebarPanel && nodePanel && appContainer) {
         btnStudio.addEventListener('click', () => {
             if (state.currentMode === 'studio') return;
+            
+            // Sync the node graph state to the pipeline before switching modes
+            if (state.currentMode === 'node' && isGraphInitialized && graph) {
+                try {
+                    const compiled = compileGraphToPipeline(graph);
+                    state.pipeline = compiled.pipeline;
+                    state.comparisonBaseline = compiled.comparisonBaseline;
+                } catch (compileErr) {
+                    console.error("Failed to compile graph on mode switch:", compileErr);
+                }
+            }
+            
             state.currentMode = 'studio';
             btnNode.classList.remove('active');
             btnStudio.classList.add('active');
@@ -962,18 +976,20 @@ function processImage() {
             
             Promise.all([loadProcImg, loadProc]).then(([procImg, origImg]) => {
                 requestAnimationFrame(() => {
-                    // Draw original canvas ONLY if size changes or we loaded a non-static baseline
+                    // Draw original canvas ONLY if size changes, we loaded a non-static baseline, or baseline changed to/from original
                     const ogCtx = elements.originalCanvas.getContext('2d');
-                    if (elements.originalCanvas.width !== origImg.width || elements.originalCanvas.height !== origImg.height) {
+                    const baselineId = result.original_image === "original" ? "original" : baselineToSend;
+                    if (elements.originalCanvas.width !== origImg.width || 
+                        elements.originalCanvas.height !== origImg.height || 
+                        result.original_image !== "original" ||
+                        lastDrawnBaseline !== baselineId) {
+                        
                         elements.originalCanvas.width = origImg.width;
                         elements.originalCanvas.height = origImg.height;
                         ogCtx.imageSmoothingEnabled = false;
                         ogCtx.clearRect(0, 0, origImg.width, origImg.height);
                         ogCtx.drawImage(origImg, 0, 0);
-                    } else if (result.original_image !== "original") {
-                        ogCtx.imageSmoothingEnabled = false;
-                        ogCtx.clearRect(0, 0, origImg.width, origImg.height);
-                        ogCtx.drawImage(origImg, 0, 0);
+                        lastDrawnBaseline = baselineId;
                     }
                     
                     // Draw processed canvas ONLY if size changes or draw updates
