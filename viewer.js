@@ -105,7 +105,12 @@ export function updateComparisonView() {
         
         // Keep the circle radius constant in screen pixels regardless of zoom
         const R = state.compPosition * 2.5 + 40; // slider range maps to 40px - 290px spotlight
-        const localRadius = R / state.transform.scale;
+        
+        let upsampleScale = 1.0;
+        if (elements.originalCanvas.width > 0) {
+            upsampleScale = elements.processedCanvas.width / elements.originalCanvas.width;
+        }
+        const localRadius = (R * upsampleScale) / state.transform.scale;
         
         elements.processedCanvas.style.clipPath = `circle(${localRadius}px at ${localXPct}% ${localYPct}%)`;
     }

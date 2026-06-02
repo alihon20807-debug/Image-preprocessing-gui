@@ -129,10 +129,24 @@
                     <h2 class="card-title">📁 Source Image</h2>
                     <div class="upload-dropzone" id="dropzone">
                         <input type="file" id="file-input" accept="image/*" class="file-input">
-                        <div class="dropzone-text">
+                        
+                        <!-- Dropzone Empty State -->
+                        <div class="dropzone-text" id="dropzone-empty-state">
                             <span class="upload-icon">📤</span>
                             <p class="primary-text">Drag & Drop or Click</p>
                             <p class="secondary-text">PNG, JPG, WEBP</p>
+                        </div>
+                        
+                        <!-- Dropzone Active State -->
+                        <div class="source-info-container hidden" id="dropzone-active-state">
+                            <div class="source-thumbnail-wrapper">
+                                <img id="source-thumbnail" class="source-thumbnail" src="" alt="Source Thumbnail">
+                            </div>
+                            <div class="source-details">
+                                <p class="source-name" id="source-filename">testimg.png</p>
+                                <p class="source-size" id="source-dimensions">- × - px</p>
+                            </div>
+                            <div class="source-replace-badge">Replace</div>
                         </div>
                     </div>
                 </section>
@@ -143,7 +157,25 @@
                     
                     <div class="control-group">
                         <span class="control-label">View Mode</span>
-                        <div class="select-wrapper">
+                        <div class="comparison-mode-selector" id="comparison-mode-selector">
+                            <button class="mode-btn active" data-mode="Split Slider" title="Split Screen Slider">
+                                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none"><line x1="12" y1="3" x2="12" y2="21"></line><path d="M18 8l4 4-4 4M6 8l-4 4 4 4"/></svg>
+                                <span>Split</span>
+                            </button>
+                            <button class="mode-btn" data-mode="Overlay Opacity" title="Overlay Opacity Blend">
+                                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                                <span>Blend</span>
+                            </button>
+                            <button class="mode-btn" data-mode="Pixel Difference" title="Pixel Difference Viewer">
+                                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg>
+                                <span>Diff</span>
+                            </button>
+                            <button class="mode-btn" data-mode="X-Ray Lens" title="X-Ray Spotlight Lens">
+                                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line><circle cx="11" cy="11" r="3"></circle></svg>
+                                <span>X-Ray</span>
+                            </button>
+                        </div>
+                        <div class="select-wrapper" style="display: none;">
                             <select id="comparison-mode" class="custom-select">
                                 <option value="Split Slider">Split Slider</option>
                                 <option value="Overlay Opacity">Overlay Opacity</option>
@@ -174,21 +206,38 @@
 
                 <!-- Layers & Transformations Section -->
                 <section class="control-card">
-                    <h2 class="card-title">🎛️ Layers & Transformations</h2>
+                    <div class="layers-section-header">
+                        <h2 class="card-title">🎛️ Layers & Transformations</h2>
+                        <div class="layers-toolbar">
+                            <button id="btn-collapse-all" class="toolbar-icon-btn" title="Collapse All Steps">
+                                <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2.5" fill="none"><polyline points="4 14 10 14 10 20"></polyline><polyline points="20 10 14 10 14 4"></polyline><line x1="14" y1="10" x2="21" y2="3"></line><line x1="10" y1="14" x2="3" y2="21"></line></svg>
+                            </button>
+                            <button id="btn-expand-all" class="toolbar-icon-btn" title="Expand All Steps">
+                                <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2.5" fill="none"><polyline points="10 4 10 10 4 10"></polyline><polyline points="14 20 14 14 20 14"></polyline><line x1="14" y1="14" x2="21" y2="21"></line><line x1="10" y1="10" x2="3" y2="3"></line></svg>
+                            </button>
+                        </div>
+                    </div>
                     
                     <div class="layers-list" id="layers-list">
-                        <!-- Dynamic layer cards will be generated here by app.js -->
+                        <!-- Dynamic step cards will be generated here by app.js -->
                     </div>
-
-                    <button id="add-layer-btn" class="btn btn-primary" style="width: 100%;">➕ Add New Layer</button>
+                    
+                    <div class="add-step-wrapper">
+                        <div class="select-wrapper">
+                            <select id="select-add-step" class="custom-select">
+                                <!-- Dynamic options filled by app.js -->
+                            </select>
+                        </div>
+                        <button id="add-step-btn" class="btn btn-primary">➕ Add Step</button>
+                    </div>
                 </section>
 
                 <!-- Pipeline Presets -->
                 <section class="control-card">
                     <h2 class="card-title">💾 Pipeline Presets</h2>
-                    <div style="display: flex; gap: 8px;">
-                        <button id="export-preset-btn" class="btn btn-secondary" style="flex: 1; padding: 10px 4px; font-size: 11px;">📤 Export JSON</button>
-                        <button id="import-preset-btn" class="btn btn-secondary" style="flex: 1; padding: 10px 4px; font-size: 11px;">📥 Import JSON</button>
+                    <div class="preset-btn-wrapper">
+                        <button id="export-preset-btn" class="btn btn-secondary">📤 Export JSON</button>
+                        <button id="import-preset-btn" class="btn btn-secondary">📥 Import JSON</button>
                         <input type="file" id="import-preset-file" accept=".json" style="display: none;">
                     </div>
                 </section>
@@ -217,12 +266,21 @@
                         </div>
                     </label>
                     <button id="btn-queue-graph" class="btn btn-primary" style="font-size: 11px; padding: 6px 12px; height: 32px; width: auto;">🚀 Queue Graph</button>
+                    
+                    <div class="layout-toggle-group" id="node-layout-toggles" style="display: inline-flex; background: rgba(22, 24, 31, 0.9); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 6px; padding: 2px; gap: 2px; margin-left: 12px;">
+                        <button id="btn-layout-split" class="layout-tab active" title="Side-by-Side Split">🌗 Split</button>
+                        <button id="btn-layout-max-editor" class="layout-tab" title="Maximize Node Canvas">🔲 Canvas</button>
+                        <button id="btn-layout-max-viewer" class="layout-tab" title="Maximize Image Viewer">🖼️ Image</button>
+                    </div>
                 </div>
             </div>
             <div class="node-canvas-body">
                 <canvas id="node-canvas"></canvas>
             </div>
         </div>
+
+        <!-- Panel Resize Handle -->
+        <div class="sidebar-resizer" id="sidebar-resizer" title="Drag to resize panels"></div>
 
         <!-- Main Display Area -->
         <main class="main-workspace">
