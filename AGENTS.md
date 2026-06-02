@@ -1,28 +1,47 @@
-# AGENTS.md — Preprocessing Studio
+# Developer Agent Guide (`AGENTS.md`)
 
-## Quick start
-```bash
-python3 preprocceser.py   # Flask dev server on http://localhost:5001
-```
-No npm/pip install needed — vanilla JS ES modules (`type="module"`), OpenCV assumed available.
+This guide outlines non-obvious constraints, architecture details, and commands necessary to work effectively on this repository.
 
-## Architecture
-- **Backend** (`preprocceser.py`): Flask app, port 5001, single `/process` POST endpoint. Divergence-index pipeline cache.
-- **Processing** (`processor.py`): OpenCV functions registered in `PROCESSING_REGISTRY` dict. Validation helpers (`check_type`, `check_one_of`, `check_range`, `check_odd_positive`) are **stubs** — actual validation is inline.
-- **Schema** (`schema.py`): `OPERATIONS_SCHEMA` dict drives the entire UI. Adding a new op requires: (1) schema entry, (2) processing function in registry.
-- **Frontend** (vanilla JS): `state.js` → `ui.js` (schema-driven render) → `viewer.js` (comparison views) → `nodes.js` (LiteGraph DAG) → `app.js` (orchestration).
+---
 
-## Conventions
-- **Fail-fast**: strict `type(val) is expected_type` checks, no coercion, no silent defaults.
-- **Colors**: hex strings `#RRGGBB` throughout (both Python and JS). Fill colors use BGR order internally.
-- **Kernel sizes**: always positive odd integers, validated with `check_odd_positive` (or inline equivalent).
-- **Errors**: never caught at route level — propagate to `@app.errorhandler(Exception)` global handler.
-- **Frontend**: `renderPipeline()` → `triggerDebouncedProcess()` (16 ms debounce) → `processImage()` (POST /process). AbortController cancels inflight requests.
+## 🚨 Critical Filename Spelling Quirk
+* **Backend Entrypoint:** `preprocceser.py` (spelled with double **"c"** and **"s"** -> `pre-pro-c-c-e-s-e-r.py`).
+  * **Do NOT** attempt to run `preprocessor.py` (which is the algorithms library) or `preprocesser.py` (which does not exist) as the entrypoint.
 
-## Key quirks
-- No tests, no linter, no formatter, no CI — none configured.
-- `processor.py` lines 7-20: four validation helpers exist as **stubs** (`pass`). Do not rely on them; validation is inline.
-- Frontend uses LiteGraph (`litegraph.min.js`) for the node editor — only custom node types are registered (`image/load`, `image/preview`, `image/baseline`, `filter/*`, `layer/blend`).
-- `comparison_baseline` sent as step ID string or `"original"`. Backend returns `"original"` literal string when baseline matches cached original (optimization).
-- Image upload uses `"cached"` sentinel string to skip re-upload when image unchanged.
-- `input_source: "previous"` is resolved to absolute step IDs before sending payload.
+---
+
+## 🛠️ Developer Commands & Environment
+
+### Running the App
+* **Start local backend server:**
+  ```bash
+  python preprocceser.py
+  ```
+  * Serves on: `http://localhost:5001/index.html` (acts as static server for the frontend in `.`).
+  * Main dependencies: `flask`, `numpy`, `opencv-python` (`cv2`).
+
+### Linting & Testing
+* **No local verification runners:** There are no configured test framework (e.g., pytest, Jest), linter, or compiler scripts in this project.
+* **Verification strategy:** Manual verification by running the server on port 5001 and testing functionality inside the browser.
+
+---
+
+## 🧩 Architectural Flow & Synchronization
+
+The application is an interactive OpenCV image processing builder with two modes: **Layer Studio** and **Node Flow** (powered by direct-loaded `litegraph.min.js`).
+
+### How Requests Flow
+1. Frontend makes API requests to `/schema` and `/process`.
+2. `preprocceser.py` validates the uploaded step DAG topological sorting (`schema.verify_pipeline_dag`) and checks parameters (`schema.validate_step_params`).
+3. Core processing calls mapped functions in `PROCESSING_REGISTRY` (`processor.py`).
+
+### Backend Matrix Caching (Gotcha!)
+* `preprocceser.py` maintains an in-memory cache of intermediate matrices (`_pipeline_cache_matrices`).
+* If you modify any processing algorithm, previous steps may still return cached results. 
+* To fully invalidate the cache, call `POST /clear-cache` (using the UI's reload features) or re-upload the target image.
+
+### Adding / Modifying Operations
+When adding a new processing operation, you **must** update exactly three places:
+1. `schema.py`: Define properties in `OPERATIONS_SCHEMA` (handles parameter validation, constraints like `odd_only` for blurs, and visibility).
+2. `processor.py`: Write the `apply_*` processing function and register it in `PROCESSING_REGISTRY`.
+3. Frontend (`nodes.js` / `ui.js` / `app.js`): Register UI elements and compile graph nodes to match the new schema properties.
