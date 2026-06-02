@@ -34,6 +34,9 @@ export function setupNodeEditorTheme() {
 export function registerCustomNodes(onGraphChangeCallback) {
     if (typeof LiteGraph === 'undefined') return;
 
+    // Clear all default, unneeded built-in LiteGraph node groups (basic, math, audio, midi, etc.)
+    LiteGraph.clearRegisteredTypes();
+
     // Helper: Register change trigger on parameter widgets
     function bindWidgetTrigger(node, widget) {
         const oldCallback = widget.callback;
@@ -47,7 +50,7 @@ export function registerCustomNodes(onGraphChangeCallback) {
     class LoadImageNode {
         constructor() {
             this.title = "📁 Load Image";
-            this.size = [180, 60];
+            this.size = [240, 70];
             this.addOutput("Image", "Image");
             
             // Info text drawn on node
@@ -66,7 +69,7 @@ export function registerCustomNodes(onGraphChangeCallback) {
     class GrayscaleNode {
         constructor() {
             this.title = "🎨 Convert to Grayscale";
-            this.size = [180, 40];
+            this.size = [240, 65];
             this.addInput("Image", "Image");
             this.addOutput("Image", "Image");
         }
@@ -77,7 +80,7 @@ export function registerCustomNodes(onGraphChangeCallback) {
     class InvertNode {
         constructor() {
             this.title = "🚫 Invert Colors";
-            this.size = [200, 70];
+            this.size = [240, 90];
             this.addInput("Image", "Image");
             this.addOutput("Image", "Image");
             
@@ -94,7 +97,7 @@ export function registerCustomNodes(onGraphChangeCallback) {
     class ContrastNode {
         constructor() {
             this.title = "🎛️ Contrast & Brightness";
-            this.size = [220, 90];
+            this.size = [240, 120];
             this.addInput("Image", "Image");
             this.addOutput("Image", "Image");
             
@@ -118,7 +121,7 @@ export function registerCustomNodes(onGraphChangeCallback) {
     class BlurNode {
         constructor() {
             this.title = "💧 Blur Filters";
-            this.size = [240, 150];
+            this.size = [240, 200];
             this.addInput("Image", "Image");
             this.addOutput("Image", "Image");
             
@@ -190,25 +193,25 @@ export function registerCustomNodes(onGraphChangeCallback) {
             
             // Reset node height dynamically
             if (type === "Gaussian Blur") {
-                this.size = [240, 190];
+                this.size = [240, 196];
                 this.wKernelX.disabled = false; this.wKernelY.disabled = false;
                 this.wSigmaX.disabled = false; this.wSigmaY.disabled = false;
                 this.wKernel.disabled = true; this.wDiameter.disabled = true;
                 this.wSigmaColor.disabled = true; this.wSigmaSpace.disabled = true;
             } else if (type === "Box Blur") {
-                this.size = [240, 110];
+                this.size = [240, 148];
                 this.wKernelX.disabled = false; this.wKernelY.disabled = false;
                 this.wSigmaX.disabled = true; this.wSigmaY.disabled = true;
                 this.wKernel.disabled = true; this.wDiameter.disabled = true;
                 this.wSigmaColor.disabled = true; this.wSigmaSpace.disabled = true;
             } else if (type === "Median Blur") {
-                this.size = [240, 90];
+                this.size = [240, 124];
                 this.wKernelX.disabled = true; this.wKernelY.disabled = true;
                 this.wSigmaX.disabled = true; this.wSigmaY.disabled = true;
                 this.wKernel.disabled = false; this.wDiameter.disabled = true;
                 this.wSigmaColor.disabled = true; this.wSigmaSpace.disabled = true;
             } else if (type === "Bilateral Filter") {
-                this.size = [240, 130];
+                this.size = [240, 172];
                 this.wKernelX.disabled = true; this.wKernelY.disabled = true;
                 this.wSigmaX.disabled = true; this.wSigmaY.disabled = true;
                 this.wKernel.disabled = true; this.wDiameter.disabled = false;
@@ -327,7 +330,7 @@ export function registerCustomNodes(onGraphChangeCallback) {
             if (isAdaptive) visibleCount += 1;
             if (hasConstantC) visibleCount += 1;
             if (hasSigmas) visibleCount += 2;
-            this.size = [240, 60 + visibleCount * 22];
+            this.size = [240, 76 + visibleCount * 24];
         }
     }
     LiteGraph.registerNodeType("filter/threshold", ThresholdNode);
@@ -442,7 +445,7 @@ export function registerCustomNodes(onGraphChangeCallback) {
             if (isAdaptive) visibleCount += 2;
             if (hasConstantC) visibleCount += 1;
             if (hasSigmas) visibleCount += 2;
-            this.size = [240, 60 + visibleCount * 22];
+            this.size = [240, 76 + visibleCount * 24];
         }
     }
     LiteGraph.registerNodeType("filter/above_to_white", AboveToWhiteNode);
@@ -553,7 +556,7 @@ export function registerCustomNodes(onGraphChangeCallback) {
             if (isDeriv) visibleCount += 2;
             if (isK) visibleCount += 1;
             if (hasScale) visibleCount += 2;
-            this.size = [240, 60 + visibleCount * 22];
+            this.size = [240, 76 + visibleCount * 24];
         }
     }
     LiteGraph.registerNodeType("filter/edges", EdgesNode);
@@ -562,7 +565,7 @@ export function registerCustomNodes(onGraphChangeCallback) {
     class BlendNode {
         constructor() {
             this.title = "🎭 Blend Images";
-            this.size = [220, 100];
+            this.size = [240, 135];
             this.addInput("Image A", "Image");
             this.addInput("Image B", "Image");
             this.addOutput("Image", "Image");
@@ -596,7 +599,7 @@ export function registerCustomNodes(onGraphChangeCallback) {
     class PreviewNode {
         constructor() {
             this.title = "👁️ Preview Result";
-            this.size = [260, 220];
+            this.size = [260, 240];
             this.addInput("Image", "Image");
             
             // Image object to cache for drawing
@@ -643,7 +646,7 @@ export function registerCustomNodes(onGraphChangeCallback) {
     class BaselineNode {
         constructor() {
             this.title = "⚖️ Set Comparison Baseline";
-            this.size = [200, 50];
+            this.size = [240, 70];
             this.addInput("Image", "Image");
             
             this.properties = { info: "Sets baseline for Interactive Viewer" };
@@ -661,7 +664,7 @@ export function registerCustomNodes(onGraphChangeCallback) {
     class UpsampleNode {
         constructor() {
             this.title = "🔍 Upsample (Scale Up)";
-            this.size = [220, 70];
+            this.size = [240, 110];
             this.addInput("Image", "Image");
             this.addOutput("Image", "Image");
 
@@ -683,7 +686,7 @@ export function registerCustomNodes(onGraphChangeCallback) {
     class DownsampleNode {
         constructor() {
             this.title = "🔎 Downsample (Scale Down)";
-            this.size = [220, 70];
+            this.size = [240, 110];
             this.addInput("Image", "Image");
             this.addOutput("Image", "Image");
 
@@ -705,7 +708,7 @@ export function registerCustomNodes(onGraphChangeCallback) {
     class CropNode {
         constructor() {
             this.title = "✂️ Crop Region";
-            this.size = [220, 110];
+            this.size = [240, 160];
             this.addInput("Image", "Image");
             this.addOutput("Image", "Image");
 
@@ -723,6 +726,448 @@ export function registerCustomNodes(onGraphChangeCallback) {
         }
     }
     LiteGraph.registerNodeType("filter/crop", CropNode);
+
+    // 15. Stroke Healing Node
+    class HealNode {
+        constructor() {
+            this.title = "❤️ Stroke Healing / Morphology";
+            this.size = [240, 260];
+            this.addInput("Image", "Image");
+            this.addOutput("Image", "Image");
+
+            this.properties = {
+                operation: "Heal Gaps in White (Closing)",
+                channel_mode: "Color Channels",
+                use_target_color: false,
+                target_color: "#000000",
+                tolerance: 30,
+                fill_color: "#ffffff",
+                bg_color: "#ffffff",
+                shape: "Rectangle",
+                kernel_x: 5,
+                kernel_y: 5,
+                iterations: 1,
+                skel_threshold: 127,
+                foreground_mode: "White strokes (Dark background)"
+            };
+
+            this.wOp = this.addWidget("combo", "Operation", this.properties.operation, (val) => {
+                this.properties.operation = val;
+                this.updateWidgetsVisibility();
+                onGraphChangeCallback();
+            }, { values: [
+                "Dilate (Thicken White)", "Erode (Thicken Black)",
+                "Heal Gaps in White (Closing)", "Heal Gaps in Black (Opening)",
+                "Stroke Outlines (Gradient)", "Extract Bright Details (Top Hat)",
+                "Extract Dark Details (Black Hat)", "Skeletonization (Thinning)"
+            ]});
+
+            this.wChan = this.addWidget("combo", "Channels", this.properties.channel_mode, (val) => {
+                this.properties.channel_mode = val;
+            }, { values: ["Color Channels", "Grayscale"] });
+
+            this.wTargetToggle = this.addWidget("toggle", "Target Color Matching", this.properties.use_target_color, (val) => {
+                this.properties.use_target_color = val;
+                this.updateWidgetsVisibility();
+                onGraphChangeCallback();
+            });
+
+            this.wTargetColor = this.addWidget("text", "Target Color", this.properties.target_color, (val) => {
+                this.properties.target_color = val;
+            });
+
+            this.wTolerance = this.addWidget("slider", "Tolerance", this.properties.tolerance, (val) => {
+                this.properties.tolerance = parseInt(val);
+            }, { min: 0, max: 255 });
+
+            this.wFillColor = this.addWidget("text", "Fill Color", this.properties.fill_color, (val) => {
+                this.properties.fill_color = val;
+            });
+
+            this.wBgColor = this.addWidget("text", "Erase/BG Color", this.properties.bg_color, (val) => {
+                this.properties.bg_color = val;
+            });
+
+            this.wShape = this.addWidget("combo", "Kernel Shape", this.properties.shape, (val) => {
+                this.properties.shape = val;
+            }, { values: ["Rectangle", "Ellipse", "Cross"] });
+
+            this.wKernelX = this.addWidget("slider", "Kernel X", this.properties.kernel_x, (val) => {
+                this.properties.kernel_x = parseInt(val);
+            }, { min: 1, max: 99, step: 2 });
+
+            this.wKernelY = this.addWidget("slider", "Kernel Y", this.properties.kernel_y, (val) => {
+                this.properties.kernel_y = parseInt(val);
+            }, { min: 1, max: 99, step: 2 });
+
+            this.wIterations = this.addWidget("slider", "Iterations", this.properties.iterations, (val) => {
+                this.properties.iterations = parseInt(val);
+            }, { min: 1, max: 25 });
+
+            this.wSkelThresh = this.addWidget("slider", "Skel Threshold", this.properties.skel_threshold, (val) => {
+                this.properties.skel_threshold = parseInt(val);
+            }, { min: 0, max: 255 });
+
+            this.wSkelMode = this.addWidget("combo", "Foreground Mode", this.properties.foreground_mode, (val) => {
+                this.properties.foreground_mode = val;
+            }, { values: ["Black strokes (Light background)", "White strokes (Dark background)"] });
+
+            bindWidgetTrigger(this, this.wOp);
+            bindWidgetTrigger(this, this.wChan);
+            bindWidgetTrigger(this, this.wTargetToggle);
+            bindWidgetTrigger(this, this.wTargetColor);
+            bindWidgetTrigger(this, this.wTolerance);
+            bindWidgetTrigger(this, this.wFillColor);
+            bindWidgetTrigger(this, this.wBgColor);
+            bindWidgetTrigger(this, this.wShape);
+            bindWidgetTrigger(this, this.wKernelX);
+            bindWidgetTrigger(this, this.wKernelY);
+            bindWidgetTrigger(this, this.wIterations);
+            bindWidgetTrigger(this, this.wSkelThresh);
+            bindWidgetTrigger(this, this.wSkelMode);
+
+            this.updateWidgetsVisibility();
+        }
+
+        updateWidgetsVisibility() {
+            const op = this.properties.operation;
+            const useTarget = this.properties.use_target_color;
+            const isSkel = op === "Skeletonization (Thinning)";
+
+            this.wTargetColor.disabled = !useTarget;
+            this.wTolerance.disabled = !useTarget;
+            this.wFillColor.disabled = !useTarget;
+            this.wBgColor.disabled = !useTarget;
+
+            this.wShape.disabled = isSkel;
+            this.wKernelX.disabled = isSkel;
+            this.wKernelY.disabled = isSkel;
+            this.wIterations.disabled = isSkel;
+
+            this.wSkelThresh.disabled = !isSkel || useTarget;
+            this.wSkelMode.disabled = !isSkel || useTarget;
+
+            let visibleCount = 3; // op, chan, targetToggle
+            if (useTarget) {
+                visibleCount += 4; // targetColor, tolerance, fillColor, bgColor
+            }
+            if (!isSkel) {
+                visibleCount += 4; // shape, kernelX, kernelY, iterations
+            }
+            if (isSkel && !useTarget) {
+                visibleCount += 2; // skelThresh, skelMode
+            }
+
+            this.size = [240, 76 + visibleCount * 24];
+        }
+    }
+    LiteGraph.registerNodeType("filter/heal", HealNode);
+
+    // 16. Fill Region Node
+    class FillNode {
+        constructor() {
+            this.title = "🪣 Fill Region";
+            this.size = [240, 200];
+            this.addInput("Image", "Image");
+            this.addOutput("Image", "Image");
+
+            this.properties = {
+                fill_mode: "Hole Filling (Contours)",
+                fill_color: "#ffffff",
+                use_target_color: false,
+                target_color: "#000000",
+                tolerance: 30,
+                lo_diff: 10,
+                up_diff: 10,
+                inpaint_radius: 3,
+                seed_x: 0,
+                seed_y: 0,
+                min_area: 20,
+                max_area: 10000,
+                channel_mode: "Color Channels"
+            };
+
+            this.wMode = this.addWidget("combo", "Fill Mode", this.properties.fill_mode, (val) => {
+                this.properties.fill_mode = val;
+                this.updateWidgetsVisibility();
+                onGraphChangeCallback();
+            }, { values: [
+                "Hole Filling (Contours)", "Color Replacement (Chroma Key)",
+                "Content-Aware Inpainting (NS)", "Content-Aware Inpainting (Telea)",
+                "Flood Fill", "Corner Background Fill"
+            ]});
+
+            this.wChan = this.addWidget("combo", "Channels", this.properties.channel_mode, (val) => {
+                this.properties.channel_mode = val;
+            }, { values: ["Color Channels", "Grayscale"] });
+
+            this.wFillColor = this.addWidget("text", "Fill Color (Hex)", this.properties.fill_color, (val) => {
+                this.properties.fill_color = val;
+            });
+
+            this.wTargetToggle = this.addWidget("toggle", "Target Color Matching", this.properties.use_target_color, (val) => {
+                this.properties.use_target_color = val;
+                this.updateWidgetsVisibility();
+                onGraphChangeCallback();
+            });
+
+            this.wTargetColor = this.addWidget("text", "Target Color", this.properties.target_color, (val) => {
+                this.properties.target_color = val;
+            });
+
+            this.wTolerance = this.addWidget("slider", "Tolerance", this.properties.tolerance, (val) => {
+                this.properties.tolerance = parseInt(val);
+            }, { min: 0, max: 255 });
+
+            this.wLower = this.addWidget("slider", "Lower Tolerance", this.properties.lo_diff, (val) => {
+                this.properties.lo_diff = parseInt(val);
+            }, { min: 0, max: 255 });
+
+            this.wUpper = this.addWidget("slider", "Upper Tolerance", this.properties.up_diff, (val) => {
+                this.properties.up_diff = parseInt(val);
+            }, { min: 0, max: 255 });
+
+            this.wRadius = this.addWidget("slider", "Inpaint Radius", this.properties.inpaint_radius, (val) => {
+                this.properties.inpaint_radius = parseInt(val);
+            }, { min: 1, max: 50 });
+
+            this.wSeedX = this.addWidget("slider", "Seed X %", this.properties.seed_x, (val) => {
+                this.properties.seed_x = parseInt(val);
+            }, { min: 0, max: 99 });
+
+            this.wSeedY = this.addWidget("slider", "Seed Y %", this.properties.seed_y, (val) => {
+                this.properties.seed_y = parseInt(val);
+            }, { min: 0, max: 99 });
+
+            this.wMinArea = this.addWidget("slider", "Min Area", this.properties.min_area, (val) => {
+                this.properties.min_area = parseInt(val);
+            }, { min: 0, max: 2000 });
+
+            this.wMaxArea = this.addWidget("slider", "Max Area", this.properties.max_area, (val) => {
+                this.properties.max_area = parseInt(val);
+            }, { min: 0, max: 50000 });
+
+            bindWidgetTrigger(this, this.wMode);
+            bindWidgetTrigger(this, this.wChan);
+            bindWidgetTrigger(this, this.wFillColor);
+            bindWidgetTrigger(this, this.wTargetToggle);
+            bindWidgetTrigger(this, this.wTargetColor);
+            bindWidgetTrigger(this, this.wTolerance);
+            bindWidgetTrigger(this, this.wLower);
+            bindWidgetTrigger(this, this.wUpper);
+            bindWidgetTrigger(this, this.wRadius);
+            bindWidgetTrigger(this, this.wSeedX);
+            bindWidgetTrigger(this, this.wSeedY);
+            bindWidgetTrigger(this, this.wMinArea);
+            bindWidgetTrigger(this, this.wMaxArea);
+
+            this.updateWidgetsVisibility();
+        }
+
+        updateWidgetsVisibility() {
+            const m = this.properties.fill_mode;
+            const useTarget = this.properties.use_target_color;
+
+            const isHole = m === "Hole Filling (Contours)";
+            const isChroma = m === "Color Replacement (Chroma Key)";
+            const isInpaint = m === "Content-Aware Inpainting (NS)" || m === "Content-Aware Inpainting (Telea)";
+            const isFlood = m === "Flood Fill";
+            const isCorner = m === "Corner Background Fill";
+
+            const hasFillColor = !isInpaint;
+            const hasTargetColor = isChroma || isInpaint || (isHole && useTarget);
+            const hasInpaintRadius = isInpaint;
+            const hasFloodTolerances = isFlood || isCorner;
+            const hasSeed = isFlood;
+            const hasArea = isHole;
+
+            this.wFillColor.disabled = !hasFillColor;
+            this.wTargetToggle.disabled = !isHole;
+            this.wTargetColor.disabled = !hasTargetColor;
+            this.wTolerance.disabled = !hasTargetColor;
+            
+            this.wLower.disabled = !hasFloodTolerances;
+            this.wUpper.disabled = !hasFloodTolerances;
+            this.wRadius.disabled = !hasInpaintRadius;
+            this.wSeedX.disabled = !hasSeed;
+            this.wSeedY.disabled = !hasSeed;
+
+            this.wMinArea.disabled = !hasArea;
+            this.wMaxArea.disabled = !hasArea;
+            this.wChan.disabled = isHole && !useTarget;
+
+            let visibleCount = 2; // mode, chan
+            if (hasFillColor) visibleCount += 1;
+            if (isHole) visibleCount += 1; // targetToggle
+            if (hasTargetColor) visibleCount += 2; // targetColor, tolerance
+            if (hasFloodTolerances) visibleCount += 2; // lower, upper
+            if (hasInpaintRadius) visibleCount += 1; // radius
+            if (hasSeed) visibleCount += 2; // seedX, seedY
+            if (hasArea) visibleCount += 2; // min_area, max_area
+
+            this.size = [240, 76 + visibleCount * 24];
+        }
+    }
+    LiteGraph.registerNodeType("filter/fill", FillNode);
+
+    // 17. Edges + Contour Fill Node
+    class EdgesFillNode {
+        constructor() {
+            this.title = "🎨 Edges + Contour Fill";
+            this.size = [240, 320];
+            this.addInput("Image", "Image");
+            this.addOutput("Image", "Image");
+
+            this.properties = {
+                algorithm: "Canny",
+                channel_mode: "Grayscale",
+                low: 50,
+                high: 150,
+                aperture: 3,
+                l2_gradient: false,
+                dx: 1,
+                dy: 0,
+                ksize: 3,
+                scale: 1.0,
+                delta: 0,
+                fill_target: "Binary Mask (Black background)",
+                draw_style: "Filled Contours",
+                thickness: 2,
+                color: 255,
+                min_area: 20,
+                max_area: 10000
+            };
+
+            this.wAlgo = this.addWidget("combo", "Algorithm", this.properties.algorithm, (val) => {
+                this.properties.algorithm = val;
+                this.updateWidgetsVisibility();
+                onGraphChangeCallback();
+            }, { values: ["Canny", "Sobel", "Scharr", "Laplacian"] });
+
+            this.wChan = this.addWidget("combo", "Channels", this.properties.channel_mode, (val) => {
+                this.properties.channel_mode = val;
+            }, { values: ["Grayscale", "Color Channels"] });
+
+            this.wLow = this.addWidget("slider", "Low Threshold", this.properties.low, (val) => {
+                this.properties.low = parseInt(val);
+            }, { min: 0, max: 255 });
+
+            this.wHigh = this.addWidget("slider", "High Threshold", this.properties.high, (val) => {
+                this.properties.high = parseInt(val);
+            }, { min: 0, max: 255 });
+
+            this.wAperture = this.addWidget("combo", "Aperture Size", this.properties.aperture, (val) => {
+                this.properties.aperture = parseInt(val);
+            }, { values: [3, 5, 7] });
+
+            this.wL2 = this.addWidget("toggle", "L2 Norm", this.properties.l2_gradient, (val) => {
+                this.properties.l2_gradient = val;
+            });
+
+            this.wDx = this.addWidget("combo", "dx Order", this.properties.dx, (val) => {
+                this.properties.dx = parseInt(val);
+            }, { values: [0, 1, 2] });
+
+            this.wDy = this.addWidget("combo", "dy Order", this.properties.dy, (val) => {
+                this.properties.dy = parseInt(val);
+            }, { values: [0, 1, 2] });
+
+            this.wKsize = this.addWidget("combo", "Kernel Size", this.properties.ksize, (val) => {
+                this.properties.ksize = parseInt(val);
+            }, { values: [1, 3, 5, 7] });
+
+            this.wScale = this.addWidget("slider", "Scale factor", this.properties.scale, (val) => {
+                this.properties.scale = parseFloat(val);
+            }, { min: 0.1, max: 5.0, step: 0.1 });
+
+            this.wDelta = this.addWidget("slider", "Delta offset", this.properties.delta, (val) => {
+                this.properties.delta = parseInt(val);
+            }, { min: -100, max: 100 });
+
+            this.wFillTarget = this.addWidget("combo", "Fill Target Canvas", this.properties.fill_target, (val) => {
+                this.properties.fill_target = val;
+            }, { values: ["Original Image", "Binary Mask (Black background)", "Binary Mask (White background)"] });
+
+            this.wDrawStyle = this.addWidget("combo", "Draw Style", this.properties.draw_style, (val) => {
+                this.properties.draw_style = val;
+                this.updateWidgetsVisibility();
+                onGraphChangeCallback();
+            }, { values: ["Filled Contours", "Contour Outlines", "Filled Bounding Boxes", "Bounding Box Outlines"] });
+
+            this.wThickness = this.addWidget("slider", "Line Thickness", this.properties.thickness, (val) => {
+                this.properties.thickness = parseInt(val);
+            }, { min: 1, max: 15 });
+
+            this.wColor = this.addWidget("slider", "Grayscale Color", this.properties.color, (val) => {
+                this.properties.color = parseInt(val);
+            }, { min: 0, max: 255 });
+
+            this.wMinArea = this.addWidget("slider", "Min Area", this.properties.min_area, (val) => {
+                this.properties.min_area = parseInt(val);
+            }, { min: 0, max: 2000 });
+
+            this.wMaxArea = this.addWidget("slider", "Max Area", this.properties.max_area, (val) => {
+                this.properties.max_area = parseInt(val);
+            }, { min: 0, max: 50000 });
+
+            bindWidgetTrigger(this, this.wAlgo);
+            bindWidgetTrigger(this, this.wChan);
+            bindWidgetTrigger(this, this.wLow);
+            bindWidgetTrigger(this, this.wHigh);
+            bindWidgetTrigger(this, this.wAperture);
+            bindWidgetTrigger(this, this.wL2);
+            bindWidgetTrigger(this, this.wDx);
+            bindWidgetTrigger(this, this.wDy);
+            bindWidgetTrigger(this, this.wKsize);
+            bindWidgetTrigger(this, this.wScale);
+            bindWidgetTrigger(this, this.wDelta);
+            bindWidgetTrigger(this, this.wFillTarget);
+            bindWidgetTrigger(this, this.wDrawStyle);
+            bindWidgetTrigger(this, this.wThickness);
+            bindWidgetTrigger(this, this.wColor);
+            bindWidgetTrigger(this, this.wMinArea);
+            bindWidgetTrigger(this, this.wMaxArea);
+
+            this.updateWidgetsVisibility();
+        }
+
+        updateWidgetsVisibility() {
+            const algo = this.properties.algorithm;
+            const style = this.properties.draw_style;
+
+            const isCanny = algo === "Canny";
+            const isDeriv = algo === "Sobel" || algo === "Scharr";
+            const isK = algo === "Sobel" || algo === "Laplacian";
+            const hasScale = algo !== "Canny";
+            const hasThickness = style === "Contour Outlines" || style === "Bounding Box Outlines";
+
+            this.wLow.disabled = !isCanny;
+            this.wHigh.disabled = !isCanny;
+            this.wAperture.disabled = !isCanny;
+            this.wL2.disabled = !isCanny;
+
+            this.wDx.disabled = !isDeriv;
+            this.wDy.disabled = !isDeriv;
+            this.wKsize.disabled = !isK;
+            this.wScale.disabled = !hasScale;
+            this.wDelta.disabled = !hasScale;
+
+            this.wThickness.disabled = !hasThickness;
+
+            let visibleCount = 2; // algo, chan
+            if (isCanny) visibleCount += 4;
+            if (isDeriv) visibleCount += 2;
+            if (isK) visibleCount += 1;
+            if (hasScale) visibleCount += 2;
+            
+            visibleCount += 2; // fillTarget, drawStyle
+            if (hasThickness) visibleCount += 1;
+            visibleCount += 3; // color, minArea, maxArea
+
+            this.size = [240, 76 + visibleCount * 24];
+        }
+    }
+    LiteGraph.registerNodeType("filter/edges_fill", EdgesFillNode);
 }
 
 // ----------------- Graph-to-Layer Topological DAG Compiler -----------------
@@ -834,6 +1279,9 @@ export function compileGraphToLayers(graph) {
             case "filter/threshold": stepType = "threshold"; break;
             case "filter/above_to_white": stepType = "above_to_white"; break;
             case "filter/edges": stepType = "edges"; break;
+            case "filter/heal": stepType = "heal"; break;
+            case "filter/fill": stepType = "fill"; break;
+            case "filter/edges_fill": stepType = "edges_fill"; break;
             case "filter/upsample": stepType = "upsample"; break;
             case "filter/downsample": stepType = "downsample"; break;
             case "filter/crop": stepType = "crop"; break;
