@@ -133,6 +133,8 @@ function loadImage(src) {
     state.originalImage = new Image();
     state.originalImage.crossOrigin = "anonymous";
     state.originalImage.onload = function () {
+        state.sourceWidth = state.originalImage.width;
+        state.sourceHeight = state.originalImage.height;
         state.originalWidth = state.originalImage.width;
         state.originalHeight = state.originalImage.height;
         state.originalImageUploaded = false; // Reset image upload state for backend cache synchronization
@@ -722,6 +724,7 @@ function setupEventListeners() {
     }
     
     // --- Keyboard Shortcuts for Comparison Modes ---
+    let lastActiveBaseline = 'original';
     window.addEventListener('keydown', (e) => {
         // Global Alt-prefixed Navigation Shortcuts
         if (e.altKey) {
@@ -974,7 +977,7 @@ function processImage() {
     if (!state.originalImageUploaded) {
         try {
             const offCtx = elements.offscreenCanvas.getContext('2d');
-            offCtx.clearRect(0, 0, state.originalWidth, state.originalHeight);
+            offCtx.clearRect(0, 0, state.sourceWidth, state.sourceHeight);
             offCtx.drawImage(state.originalImage, 0, 0);
             originalBase64 = elements.offscreenCanvas.toDataURL('image/png');
         } catch (e) {
@@ -1101,55 +1104,51 @@ function processImage() {
             });
             
             Promise.all([loadProcImg, loadProc]).then(([procImg, origImg]) => {
-                requestAnimationFrame(() => {
-                    // Draw original canvas ONLY if size changes, we loaded a non-static baseline, or baseline changed to/from original
-                    const ogCtx = elements.originalCanvas.getContext('2d');
-                    const baselineId = result.original_image === "original" ? "original" : baselineToSend;
-                    if (elements.originalCanvas.width !== origImg.width || 
-                        elements.originalCanvas.height !== origImg.height || 
-                        result.original_image !== "original" ||
-                        lastDrawnBaseline !== baselineId) {
-                        
-                        elements.originalCanvas.width = origImg.width;
-                        elements.originalCanvas.height = origImg.height;
-                        state.originalWidth = origImg.width;
-                        state.originalHeight = origImg.height;
-                        if (elements.statusDim) {
-                            elements.statusDim.textContent = `${state.originalWidth} × ${state.originalHeight} px`;
-                        }
-                        ogCtx.imageSmoothingEnabled = false;
-                        ogCtx.clearRect(0, 0, origImg.width, origImg.height);
-                        ogCtx.drawImage(origImg, 0, 0);
-                        lastDrawnBaseline = baselineId;
-                    }
-                    
-                    // Draw processed canvas ONLY if size changes or draw updates
-                    const procCtx = elements.processedCanvas.getContext('2d', { willReadFrequently: true });
-                    if (elements.processedCanvas.width !== procImg.width || elements.processedCanvas.height !== procImg.height) {
-                        elements.processedCanvas.width = procImg.width;
-                        elements.processedCanvas.height = procImg.height;
-                    }
-                    procCtx.imageSmoothingEnabled = false;
-                    procCtx.clearRect(0, 0, procImg.width, procImg.height);
-                    procCtx.drawImage(procImg, 0, 0);
-                    
-                    isProcessing = false;
-                    if (pendingProcess) {
-                        pendingProcess = false;
-                        processImage();
-                    }
-                    
-                    // Refresh transform scales to keep layout stacked perfectly
-                    updateCanvasesTransform();
-     
-                    // If in Node mode, update the LiteGraph preview nodes with the newly processed image
-                    if (state.currentMode === 'node' && isGraphInitialized && graph) {
-                        const previews = graph.findNodesByType("image/preview");
-                        previews.forEach(pNode => {
-                            pNode.updatePreview(result.processed_image);
-                        });
-                    }
-                });
+                // Cache baseline dimensions for correct auto-fitting and coordinate checks (Bug 8)
+                state.originalWidth = origImg.width;
+                state.originalHeight = origImg.height;
+                if (elements.statusDim) {
+                    elements.statusDim.textContent = `${state.originalWidth} × ${state.originalHeight} px`;
+                }
+
+                // Draw original canvas ONLY if size changes or we loaded a non-static baseline
+                const ogCtx = elements.originalCanvas.getContext('2d');
+                if (elements.originalCanvas.width !== origImg.width || elements.originalCanvas.height !== origImg.height) {
+                    elements.originalCanvas.width = origImg.width;
+                    elements.originalCanvas.height = origImg.height;
+                    ogCtx.imageSmoothingEnabled = false;
+                    ogCtx.drawImage(origImg, 0, 0);
+                } else if (result.original_image !== "original") {
+                    ogCtx.imageSmoothingEnabled = false;
+                    ogCtx.drawImage(origImg, 0, 0);
+                }
+                
+                // Draw processed canvas ONLY if size changes or draw updates
+                const procCtx = elements.processedCanvas.getContext('2d', { willReadFrequently: true });
+                if (elements.processedCanvas.width !== procImg.width || elements.processedCanvas.height !== procImg.height) {
+                    elements.processedCanvas.width = procImg.width;
+                    elements.processedCanvas.height = procImg.height;
+                }
+                procCtx.imageSmoothingEnabled = false;
+                // Avoid clearRect to prevent processed canvas flash (Bug 10)
+                procCtx.drawImage(procImg, 0, 0);
+                
+                isProcessing = false;
+                if (pendingProcess) {
+                    pendingProcess = false;
+                    processImage();
+                }
+                
+                // Refresh transform scales to keep layout stacked perfectly
+                updateCanvasesTransform();
+ 
+                // If in Node mode, update the LiteGraph preview nodes with the newly processed image
+                if (state.currentMode === 'node' && isGraphInitialized && graph) {
+                    const previews = graph.findNodesByType("image/preview");
+                    previews.forEach(pNode => {
+                        pNode.updatePreview(result.processed_image);
+                    });
+                }
             });
         } else {
             console.error("Error from backend:", result.error || "Missing image data in response");

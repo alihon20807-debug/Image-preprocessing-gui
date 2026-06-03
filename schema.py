@@ -798,7 +798,8 @@ OPERATIONS_SCHEMA = {
                 "visible_if": {
                     "fill_mode": [
                         "Hole Filling (Contours)", "Color Replacement (Chroma Key)",
-                        "Content-Aware Inpainting (NS)", "Content-Aware Inpainting (Telea)"
+                        "Content-Aware Inpainting (NS)", "Content-Aware Inpainting (Telea)",
+                        "Flood Fill", "Corner Background Fill"
                     ]
                 }
             },
@@ -1040,8 +1041,13 @@ def validate_step_params(step_type, params):
                 
         # Odd positive constraints
         if param_def.get("odd_only", False):
-            if type(val) is not int or val < 1 or val % 2 == 0:
-                raise ValueError(f"Constraint Violation: Parameter '{label}' must be a positive odd integer >= 1. Got {val}")
+            is_odd_required = True
+            if step_type == 'blur' and step.get('blur_type') == 'Box Blur':
+                is_odd_required = False
+                
+            if is_odd_required:
+                if type(val) is not int or val < 1 or val % 2 == 0:
+                    raise ValueError(f"Constraint Violation: Parameter '{label}' must be a positive odd integer >= 1. Got {val}")
 
 def verify_pipeline_dag(pipeline):
     """

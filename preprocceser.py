@@ -68,121 +68,138 @@ def process():
     global _cached_original_img, _pipeline_cache_matrices, _last_pipeline_state
     
     with _cache_lock:
-        params = request.json
-        if not params:
-            raise KeyError("Invalid request format: Top-level payload must be JSON.")
-            
-        if 'image' not in params:
-            raise KeyError("Invalid request format: Top-level payload must contain an 'image' key.")
-            
-        img_b64 = params['image']
-        
-        image_changed = False
-        if img_b64 and img_b64 != "cached":
-            # New image uploaded! Decode and cache it.
-            img_data = img_b64.split(',')[-1]
-            img_bytes = base64.b64decode(img_data)
-            nparr = np.frombuffer(img_bytes, np.uint8)
-            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            if img is None:
-                raise ValueError("Failed to decode image data.")
-            _cached_original_img = img.copy()
-            
-            # Invalidate all cache entries completely on a new image
-            _pipeline_cache_matrices.clear()
-            _last_pipeline_state = []
-            image_changed = True
-        else:
-            # Use cached original image
-            if _cached_original_img is None:
-                # If server restarted or cache got cleared, return CacheMissError
-                response = jsonify({
-                    "error_type": "CacheMissError",
-                    "message": "Original image cache is empty. Please re-upload.",
-                    "require_reupload": True
-                })
-                response.status_code = 400
-                return response
-            img = _cached_original_img.copy()
-        
-        if 'comparison_baseline' not in params:
-            raise KeyError("Missing structural parameter: 'comparison_baseline'")
-        comparison_baseline = params['comparison_baseline']
-        
-        if 'pipeline' not in params:
-            raise KeyError("Missing structural parameter: 'pipeline'")
-            
-        pipeline = params['pipeline']
-        if type(pipeline) is not list:
-            raise TypeError(f"Pipeline must be an array list. Got {type(pipeline).__name__}")
-            
-        # Step 1 & 2: Validate parameters & DAG structure (returning 400 BadRequest on failure)
-        from schema import verify_pipeline_dag, validate_step_params
+        import copy
         try:
+            params = request.json
+            if not params:
+                raise KeyError("Invalid request format: Top-level payload must be JSON.")
+                
+            if 'image' not in params:
+                raise KeyError("Invalid request format: Top-level payload must contain an 'image' key.")
+                
+            if 'comparison_baseline' not in params:
+                raise KeyError("Missing structural parameter: 'comparison_baseline'")
+            comparison_baseline = params['comparison_baseline']
+            
+            if 'pipeline' not in params:
+                raise KeyError("Missing structural parameter: 'pipeline'")
+                
+            pipeline = params['pipeline']
+            if type(pipeline) is not list:
+                raise TypeError(f"Pipeline must be an array list. Got {type(pipeline).__name__}")
+                
+            # Make a deep copy of the pipeline parameters to prevent mutating incoming request data (Bug 11)
+            pipeline = copy.deepcopy(pipeline)
+            
+            # Step 1 & 2: Validate parameters & DAG structure FIRST (Bug 1)
+            from schema import verify_pipeline_dag, validate_step_params
             for step in pipeline:
                 validate_step_params(step['type'], step)
             verify_pipeline_dag(pipeline)
-        except (ValueError, TypeError, KeyError) as val_err:
-            response = jsonify({
-                "error_type": "ValidationError",
-                "message": str(val_err)
-            })
-            response.status_code = 400
-            return response
             
-        # Defensively evict obsolete cache keys that are not present in current pipeline
-        active_ids = {step['id'] for step in pipeline}
-        active_ids.add("original")
-        
-        cached_keys = list(_pipeline_cache_matrices.keys())
-        for key in cached_keys:
-            if key not in active_ids:
-                _pipeline_cache_matrices.pop(key, None)
+            # Now, decode the image (if it's a new one)
+            img_b64 = params['image']
+            image_changed = False
+            if img_b64 and img_b64 != "cached":
+                # New image uploaded! Decode and cache it.
+                img_data = img_b64.split(',')[-1]
+                img_bytes = base64.b64decode(img_data)
+                nparr = np.frombuffer(img_bytes, np.uint8)
+                img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                if img is None:
+                    raise ValueError("Failed to decode image data.")
+                _cached_original_img = img.copy()
                 
-        # Always ensure original image is available in matrix cache
-        _pipeline_cache_matrices["original"] = _cached_original_img.copy()
-        
-        # Step 3: Backend-Driven Cache Invalidation (Divergence Index Scan)
-        divergence_idx = len(pipeline)
-        
-        if not image_changed:
-            # Scan side-by-side to find the first point of divergence
-            for idx in range(min(len(pipeline), len(_last_pipeline_state))):
-                new_step = pipeline[idx]
-                old_step = _last_pipeline_state[idx]
-                
-                if new_step != old_step:
-                    divergence_idx = idx
-                    break
+                # Invalidate all cache entries completely on a new image
+                _pipeline_cache_matrices.clear()
+                _last_pipeline_state = []
+                image_changed = True
             else:
-                if len(pipeline) != len(_last_pipeline_state):
-                    divergence_idx = min(len(pipeline), len(_last_pipeline_state))
-        else:
-            divergence_idx = 0
+                # Use cached original image
+                if _cached_original_img is None:
+                    # If server restarted or cache got cleared, return CacheMissError
+                    response = jsonify({
+                        "error_type": "CacheMissError",
+                        "message": "Original image cache is empty. Please re-upload.",
+                        "require_reupload": True
+                    })
+                    response.status_code = 400
+                    return response
+                img = _cached_original_img.copy()
+                
+            # Defensively evict obsolete cache keys that are not present in current pipeline
+            active_ids = {step['id'] for step in pipeline}
+            active_ids.add("original")
             
-        # Eviction: Remove step cache entries from the divergence point to the end of the old pipeline
-        for idx in range(divergence_idx, len(_last_pipeline_state)):
-            old_step = _last_pipeline_state[idx]
-            old_step_id = old_step['id']
-            _pipeline_cache_matrices.pop(old_step_id, None)
+            cached_keys = list(_pipeline_cache_matrices.keys())
+            for key in cached_keys:
+                if key not in active_ids:
+                    _pipeline_cache_matrices.pop(key, None)
+                    
+            # Always ensure original image is available in matrix cache
+            _pipeline_cache_matrices["original"] = _cached_original_img.copy()
             
-        # Step 4: Pipeline Execution Loop
-        for idx, step in enumerate(pipeline):
-            step_id = step['id']
-            step_type = step['type']
-            disabled = step.get('disabled', False)
+            # Step 3: Backend-Driven Cache Invalidation (Divergence Index Scan)
+            divergence_idx = len(pipeline)
             
-            # Resolve blend_source "previous" if it is a blend step (Bug #5)
-            if step_type == 'blend':
-                blend_src = step.get('blend_source', 'previous')
-                if blend_src == 'previous':
-                    blend_key = pipeline[idx - 1]['id'] if idx > 0 else "original"
+            if not image_changed:
+                # Scan side-by-side to find the first point of divergence
+                for idx in range(min(len(pipeline), len(_last_pipeline_state))):
+                    new_step = pipeline[idx]
+                    old_step = _last_pipeline_state[idx]
+                    
+                    if new_step != old_step:
+                        divergence_idx = idx
+                        break
                 else:
-                    blend_key = blend_src
-                step['blend_source'] = blend_key
-            
-            if disabled:
-                # If disabled, its output is its resolved input
+                    if len(pipeline) != len(_last_pipeline_state):
+                        divergence_idx = min(len(pipeline), len(_last_pipeline_state))
+            else:
+                divergence_idx = 0
+                
+            # Eviction: Remove step cache entries from the divergence point to the end of the old pipeline
+            for idx in range(divergence_idx, len(_last_pipeline_state)):
+                old_step = _last_pipeline_state[idx]
+                old_step_id = old_step['id']
+                _pipeline_cache_matrices.pop(old_step_id, None)
+                
+            # Step 4: Pipeline Execution Loop
+            for idx, step in enumerate(pipeline):
+                step_id = step['id']
+                step_type = step['type']
+                disabled = step.get('disabled', False)
+                
+                # Resolve blend_source "previous" if it is a blend step (Bug #5)
+                if step_type == 'blend':
+                    blend_src = step.get('blend_source', 'previous')
+                    if blend_src == 'previous':
+                        blend_key = pipeline[idx - 1]['id'] if idx > 0 else "original"
+                    else:
+                        blend_key = blend_src
+                    step['blend_source'] = blend_key
+                
+                if disabled:
+                    # If disabled, its output is its resolved input
+                    input_src = step.get('input_source', 'previous')
+                    if input_src == 'previous':
+                        input_key = pipeline[idx - 1]['id'] if idx > 0 else "original"
+                    else:
+                        input_key = input_src
+                        
+                    if input_key not in _pipeline_cache_matrices:
+                        raise KeyError(f"Cache reference missing: '{input_key}' not found in cached step matrices.")
+                        
+                    out_img = _pipeline_cache_matrices[input_key].copy()
+                    _pipeline_cache_matrices[step_id] = out_img
+                    continue
+                    
+                # Determine if this step can be skipped (clean step)
+                if idx < divergence_idx and step_id in _pipeline_cache_matrices:
+                    # Clean cache hit, skip execution!
+                    continue
+                    
+                # Execute dirty step
+                # 1. Resolve input image
                 input_src = step.get('input_source', 'previous')
                 if input_src == 'previous':
                     input_key = pipeline[idx - 1]['id'] if idx > 0 else "original"
@@ -192,109 +209,96 @@ def process():
                 if input_key not in _pipeline_cache_matrices:
                     raise KeyError(f"Cache reference missing: '{input_key}' not found in cached step matrices.")
                     
-                out_img = _pipeline_cache_matrices[input_key].copy()
+                input_img = _pipeline_cache_matrices[input_key]
+                
+                # 2. Get processing function from registry
+                if step_type not in PROCESSING_REGISTRY:
+                    raise KeyError(f"Registry Mapping Miss: Operation type '{step_type}' is unknown.")
+                process_func = PROCESSING_REGISTRY[step_type]
+                
+                # 3. Invoke function (only pass cache_matrices to 'blend')
+                if step_type == 'blend':
+                    out_img = process_func(input_img, step, _pipeline_cache_matrices)
+                else:
+                    out_img = process_func(input_img, step)
+                    
+                # 4. Universal dry/wet strength logic
+                if 'strength' in step and step_type != 'blend':
+                    strength = float(step['strength']) / 100.0
+                    if strength < 1.0:
+                        if out_img.shape == input_img.shape:
+                            out_img = cv2.addWeighted(out_img, strength, input_img, 1.0 - strength, 0)
+                        elif out_img.shape[:2] == input_img.shape[:2]:
+                            proc_temp = out_img.copy()
+                            in_temp = input_img.copy()
+                            if len(proc_temp.shape) == 2:
+                                proc_temp = cv2.cvtColor(proc_temp, cv2.COLOR_GRAY2BGR)
+                            if len(in_temp.shape) == 2:
+                                in_temp = cv2.cvtColor(in_temp, cv2.COLOR_GRAY2BGR)
+                            blended = cv2.addWeighted(proc_temp, strength, in_temp, 1.0 - strength, 0)
+                            if len(out_img.shape) == 2:
+                                out_img = cv2.cvtColor(blended, cv2.COLOR_BGR2GRAY)
+                            else:
+                                out_img = blended
+                                
+                # Store computed result in persistent cache
                 _pipeline_cache_matrices[step_id] = out_img
-                continue
                 
-            # Determine if this step can be skipped (clean step)
-            if idx < divergence_idx and step_id in _pipeline_cache_matrices:
-                # Clean cache hit, skip execution!
-                continue
-                
-            # Execute dirty step
-            # 1. Resolve input image
-            input_src = step.get('input_source', 'previous')
-            if input_src == 'previous':
-                input_key = pipeline[idx - 1]['id'] if idx > 0 else "original"
+            # Save the executed pipeline configuration
+            _last_pipeline_state = copy.deepcopy(pipeline)
+            
+            # Resolve the final processed image
+            if pipeline:
+                last_step_id = pipeline[-1]['id']
+                processed = _pipeline_cache_matrices.get(last_step_id, img)
             else:
-                input_key = input_src
+                processed = img
                 
-            if input_key not in _pipeline_cache_matrices:
-                raise KeyError(f"Cache reference missing: '{input_key}' not found in cached step matrices.")
-                
-            input_img = _pipeline_cache_matrices[input_key]
-            
-            # 2. Get processing function from registry
-            if step_type not in PROCESSING_REGISTRY:
-                raise KeyError(f"Registry Mapping Miss: Operation type '{step_type}' is unknown.")
-            process_func = PROCESSING_REGISTRY[step_type]
-            
-            # 3. Invoke function (only pass cache_matrices to 'blend')
-            if step_type == 'blend':
-                out_img = process_func(input_img, step, _pipeline_cache_matrices)
+            # Resolve comparison baseline fallback
+            if comparison_baseline == "original":
+                baseline_img = _cached_original_img.copy()
+            elif comparison_baseline in _pipeline_cache_matrices:
+                baseline_img = _pipeline_cache_matrices[comparison_baseline]
             else:
-                out_img = process_func(input_img, step)
+                baseline_img = _cached_original_img.copy()
                 
-            # 4. Universal dry/wet strength logic
-            if 'strength' in step and step_type != 'blend':
-                strength = float(step['strength']) / 100.0
-                if strength < 1.0:
-                    if out_img.shape == input_img.shape:
-                        out_img = cv2.addWeighted(out_img, strength, input_img, 1.0 - strength, 0)
-                    elif out_img.shape[:2] == input_img.shape[:2]:
-                        proc_temp = out_img.copy()
-                        in_temp = input_img.copy()
-                        if len(proc_temp.shape) == 2:
-                            proc_temp = cv2.cvtColor(proc_temp, cv2.COLOR_GRAY2BGR)
-                        if len(in_temp.shape) == 2:
-                            in_temp = cv2.cvtColor(in_temp, cv2.COLOR_GRAY2BGR)
-                        blended = cv2.addWeighted(proc_temp, strength, in_temp, 1.0 - strength, 0)
-                        if len(out_img.shape) == 2:
-                            out_img = cv2.cvtColor(blended, cv2.COLOR_BGR2GRAY)
-                        else:
-                            out_img = blended
-                            
-            # Store computed result in persistent cache
-            _pipeline_cache_matrices[step_id] = out_img
-            
-        # Save the executed pipeline configuration
-        import copy
-        _last_pipeline_state = copy.deepcopy(pipeline)
-        
-        # Resolve the final processed image
-        if pipeline:
-            last_step_id = pipeline[-1]['id']
-            processed = _pipeline_cache_matrices.get(last_step_id, img)
-        else:
-            processed = img
-            
-        # Resolve comparison baseline fallback
-        if comparison_baseline == "original":
-            baseline_img = _cached_original_img.copy()
-        elif comparison_baseline in _pipeline_cache_matrices:
-            baseline_img = _pipeline_cache_matrices[comparison_baseline]
-        else:
-            baseline_img = _cached_original_img.copy()
-            
-        # Ensure baseline and processed have identical spatial dimensions for comparison view
-        if baseline_img.shape[:2] != processed.shape[:2]:
-            baseline_img = cv2.resize(baseline_img, (processed.shape[1], processed.shape[0]))
-        if len(baseline_img.shape) == 2 and len(processed.shape) == 3:
-            baseline_img = cv2.cvtColor(baseline_img, cv2.COLOR_GRAY2BGR)
-        elif len(baseline_img.shape) == 3 and len(processed.shape) == 2:
-            baseline_img = cv2.cvtColor(baseline_img, cv2.COLOR_BGR2GRAY)
-            
-        # Optimize baseline transmission if it exactly matches the original
-        is_baseline_same_as_original = False
-        if _cached_original_img is not None and baseline_img.shape == _cached_original_img.shape:
-            if np.array_equal(baseline_img, _cached_original_img):
-                is_baseline_same_as_original = True
+            # Ensure baseline and processed have identical spatial dimensions for comparison view
+            if baseline_img.shape[:2] != processed.shape[:2]:
+                baseline_img = cv2.resize(baseline_img, (processed.shape[1], processed.shape[0]))
+            if len(baseline_img.shape) == 2 and len(processed.shape) == 3:
+                baseline_img = cv2.cvtColor(baseline_img, cv2.COLOR_GRAY2BGR)
+            elif len(baseline_img.shape) == 3 and len(processed.shape) == 2:
+                baseline_img = cv2.cvtColor(baseline_img, cv2.COLOR_BGR2GRAY)
                 
-        _, processed_buf = cv2.imencode('.png', processed)
-        processed_b64 = base64.b64encode(processed_buf).decode('utf-8')
-        processed_url = f"data:image/png;base64,{processed_b64}"
-        
-        if is_baseline_same_as_original:
-            baseline_url = "original"
-        else:
-            _, baseline_buf = cv2.imencode('.png', baseline_img)
-            baseline_b64 = base64.b64encode(baseline_buf).decode('utf-8')
-            baseline_url = f"data:image/png;base64,{baseline_b64}"
+            # Optimize baseline transmission if it exactly matches the original
+            is_baseline_same_as_original = False
+            if _cached_original_img is not None and baseline_img.shape == _cached_original_img.shape:
+                if np.array_equal(baseline_img, _cached_original_img):
+                    is_baseline_same_as_original = True
+                    
+            _, processed_buf = cv2.imencode('.png', processed)
+            processed_b64 = base64.b64encode(processed_buf).decode('utf-8')
+            processed_url = f"data:image/png;base64,{processed_b64}"
             
-        return jsonify({
-            "processed_image": processed_url,
-            "original_image": baseline_url
-        })
+            if is_baseline_same_as_original:
+                baseline_url = "original"
+            else:
+                _, baseline_buf = cv2.imencode('.png', baseline_img)
+                baseline_b64 = base64.b64encode(baseline_buf).decode('utf-8')
+                baseline_url = f"data:image/png;base64,{baseline_b64}"
+                
+            return jsonify({
+                "processed_image": processed_url,
+                "original_image": baseline_url
+            })
+            
+        except (ValueError, TypeError, KeyError) as val_err:
+            response = jsonify({
+                "error_type": "ValidationError",
+                "message": str(val_err)
+            })
+            response.status_code = 400
+            return response
 
 
 # ----------------- Server Booting -----------------

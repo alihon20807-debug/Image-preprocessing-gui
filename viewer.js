@@ -60,7 +60,7 @@ export function updateComparisonView() {
     // Sync UI badge
     elements.modeBadge.textContent = state.comparisonMode;
     
-    const wrapperWidth = elements.canvasWrapper.clientWidth;
+    const wrapperWidth = elements.canvasWrapper ? elements.canvasWrapper.getBoundingClientRect().width : 1;
     const canvasLeft = Math.round(state.transform.x);
     const canvasWidth = elements.originalCanvas.width * state.transform.scale;
     

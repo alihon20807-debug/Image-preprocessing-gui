@@ -218,17 +218,39 @@ export function registerCustomNodes(onGraphChangeCallback) {
                 }
 
                 updateWidgetsVisibility() {
-                    let visibleCount = 2; // Strength and Disabled sliders/checkboxes are always visible
+                    if (!this.widgets) return;
+                    if (!this.allWidgets) {
+                        this.allWidgets = [...this.widgets];
+                    }
+
+                    const visibleWidgets = [];
+                    const wDisabled = this.allWidgets.find(w => w.name === "Disabled");
+                    const wStrength = this.allWidgets.find(w => w.name === "Step Strength");
+                    if (wDisabled) visibleWidgets.push(wDisabled);
+                    if (wStrength) visibleWidgets.push(wStrength);
+
+                    let visibleCount = visibleWidgets.length;
 
                     if (opDef.params) {
                         for (const [paramName, paramDef] of Object.entries(opDef.params)) {
                             if (paramDef.type === 'step_id_reference') continue;
-                            if (!this.widgets) continue;
-                            const widget = this.widgets.find(w => w.name === paramDef.label);
+                            const widget = this.allWidgets.find(w => w.paramName === paramName);
                             if (!widget) continue;
 
                             let isVisible = true;
-                            if (paramDef.visible_if) {
+                            
+                            // Custom override for target_color / tolerance under fill step (Bug 14 / Bug 24)
+                            if (stepType === 'fill' && (paramName === 'target_color' || paramName === 'tolerance')) {
+                                const mode = this.properties.fill_mode;
+                                const chromaModes = ['Color Replacement (Chroma Key)', 'Content-Aware Inpainting (NS)', 'Content-Aware Inpainting (Telea)'];
+                                if (chromaModes.includes(mode)) {
+                                    isVisible = true;
+                                } else if (mode === 'Hole Filling (Contours)') {
+                                    isVisible = this.properties.use_target_color === true;
+                                } else {
+                                    isVisible = false;
+                                }
+                            } else if (paramDef.visible_if) {
                                 for (const [depName, allowedValues] of Object.entries(paramDef.visible_if)) {
                                     const depVal = this.properties[depName];
                                     if (!allowedValues.includes(depVal)) {
@@ -240,14 +262,13 @@ export function registerCustomNodes(onGraphChangeCallback) {
 
                             widget.disabled = !isVisible;
                             if (isVisible) {
-                                widget.type = widget.originalType;
+                                visibleWidgets.push(widget);
                                 visibleCount++;
-                            } else {
-                                widget.type = "hidden";
                             }
                         }
                     }
 
+                    this.widgets = visibleWidgets;
                     this.size[1] = Math.max(60, 52 + (this.inputs ? this.inputs.length * 12 : 0) + visibleCount * 24);
                 }
             }
@@ -349,10 +370,13 @@ export function compileGraphToPipeline(graph) {
             position: [node.pos[0], node.pos[1]]
         };
 
-        // Shallow copy all other custom properties into the step parameter list
-        for (const [key, val] of Object.entries(node.properties)) {
-            if (key !== 'disabled' && key !== 'strength') {
-                step[key] = val;
+        // Copy only valid parameters defined in the step's schema (Bug 22)
+        const opDef = state.schema[stepType];
+        if (opDef && opDef.params) {
+            for (const paramName of Object.keys(opDef.params)) {
+                if (node.properties[paramName] !== undefined) {
+                    step[paramName] = node.properties[paramName];
+                }
             }
         }
 

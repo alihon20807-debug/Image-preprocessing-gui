@@ -715,8 +715,9 @@ def apply_heal(img, step):
             element = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
             binary_temp = mask_u8.copy()
             done = False
-            
-            while not done:
+            iters = 0
+            while not done and iters < 1000:
+                iters += 1
                 eroded = cv2.erode(binary_temp, element)
                 temp = cv2.dilate(eroded, element)
                 temp = cv2.subtract(binary_temp, temp)
@@ -822,8 +823,9 @@ def apply_heal(img, step):
                 skel_ch = np.zeros(binary.shape, np.uint8)
                 element = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
                 done = False
-                
-                while not done:
+                iters = 0
+                while not done and iters < 1000:
+                    iters += 1
                     eroded = cv2.erode(binary, element)
                     temp = cv2.dilate(eroded, element)
                     temp = cv2.subtract(binary, temp)
@@ -849,8 +851,9 @@ def apply_heal(img, step):
             skel = np.zeros(binary.shape, np.uint8)
             element = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
             done = False
-            
-            while not done:
+            iters = 0
+            while not done and iters < 1000:
+                iters += 1
                 eroded = cv2.erode(binary, element)
                 temp = cv2.dilate(eroded, element)
                 temp = cv2.subtract(binary, temp)
@@ -1030,7 +1033,12 @@ def apply_fill(img, step):
         else:
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if is_color else img.copy()
             
-        contours, _ = cv2.findContours(gray, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+        try:
+            contours, _ = cv2.findContours(gray, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+        except Exception as e:
+            import sys
+            sys.stderr.write(f"[WARNING] cv2.findContours failed: {e}\n")
+            contours = []
         
         res = img.copy()
         for c in contours:
@@ -1128,11 +1136,12 @@ def apply_edges_fill(img, step):
         raise TypeError(f"img must be a numpy.ndarray. Got {type(img).__name__}")
     verify_step_base(step)
     
-    edges_map = apply_edges(img, step)
-    
-    # findContours requires single-channel input; if Color Channels mode produced a BGR edge map, convert it
-    if len(edges_map.shape) > 2:
-        edges_map = cv2.cvtColor(edges_map, cv2.COLOR_BGR2GRAY)
+    # Validate parameters first before running edge detection filter
+    if 'algorithm' not in step:
+        raise KeyError("Missing required parameter 'algorithm' for Edge Fill detection phase")
+    check_type(step['algorithm'], str, 'algorithm')
+    algo = step['algorithm']
+    check_one_of(algo, {'Canny', 'Sobel', 'Scharr', 'Laplacian'}, 'algorithm')
     
     required_edge_fill = {'fill_target', 'color', 'min_area', 'max_area', 'draw_style', 'thickness'}
     for k in required_edge_fill:
@@ -1164,6 +1173,13 @@ def apply_edges_fill(img, step):
     if thickness <= 0:
         raise ValueError(f"thickness must be a positive integer. Got {thickness}")
         
+    # Execute edge detection safely
+    edges_map = apply_edges(img, step)
+    
+    # findContours requires single-channel input; if Color Channels mode produced a BGR edge map, convert using channel-wise max (Bug 3)
+    if len(edges_map.shape) > 2:
+        edges_map = np.max(edges_map, axis=2)
+        
     is_color = len(img.shape) > 2
     color_val = (fill_color, fill_color, fill_color) if is_color else fill_color
     
@@ -1174,7 +1190,12 @@ def apply_edges_fill(img, step):
     else:
         res = img.copy()
         
-    contours, _ = cv2.findContours(edges_map, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+    try:
+        contours, _ = cv2.findContours(edges_map, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+    except Exception as e:
+        import sys
+        sys.stderr.write(f"[WARNING] cv2.findContours failed in edges_fill: {e}\n")
+        contours = []
     for c in contours:
         area = cv2.contourArea(c)
         if min_area <= area <= max_area:
@@ -1196,45 +1217,71 @@ def apply_above_to_white(img, step):
         raise TypeError(f"img must be a numpy.ndarray. Got {type(img).__name__}")
     verify_step_base(step)
     
-    required_above_keys = {'algorithm', 'value', 'block_size_x', 'block_size_y', 'constant_c', 'channel_mode', 'condition', 'value_max', 'sigma_x', 'sigma_y', 'fill_color'}
+    # Always required keys
+    required_above_keys = {'algorithm', 'value', 'channel_mode', 'condition', 'fill_color'}
     for k in required_above_keys:
         if k not in step: raise KeyError(f"Missing required parameter '{k}' for Above to White")
         
     check_type(step['algorithm'], str, 'algorithm')
     check_type(step['value'], int, 'value')
-    check_type(step['block_size_x'], int, 'block_size_x')
-    check_type(step['block_size_y'], int, 'block_size_y')
-    check_type(step['constant_c'], int, 'constant_c')
     check_type(step['channel_mode'], str, 'channel_mode')
     check_type(step['condition'], str, 'condition')
-    check_type(step['value_max'], int, 'value_max')
-    if type(step['sigma_x']) not in (int, float):
-        raise TypeError(f"sigma_x must be int or float. Got {type(step['sigma_x']).__name__}")
-    if type(step['sigma_y']) not in (int, float):
-        raise TypeError(f"sigma_y must be int or float. Got {type(step['sigma_y']).__name__}")
     check_type(step['fill_color'], str, 'fill_color')
     
     algo = step['algorithm']
     val = step['value']
-    block_size_x = step['block_size_x']
-    block_size_y = step['block_size_y']
-    constant_c = step['constant_c']
     channel_mode = step['channel_mode']
     condition = step['condition']
-    val_max = step['value_max']
-    sigma_x = float(step['sigma_x'])
-    sigma_y = float(step['sigma_y'])
     fill_color_param = step['fill_color']
     
     check_one_of(algo, {'Global', "Otsu's", 'Triangle', 'Adaptive Mean', 'Adaptive Gaussian'}, 'algorithm')
     check_range(val, 0, 255, 'value')
-    check_range(val_max, 0, 255, 'value_max')
     check_one_of(channel_mode, {'Grayscale', 'Color Channels'}, 'channel_mode')
     check_one_of(condition, {
         'Above or Equal (>=)', 'Above (>)', 'Below (<)', 'Below or Equal (<=)',
         'Inside Range [Min, Max]', 'Outside Range'
     }, 'condition')
     
+    # Conditional keys (Bug 13)
+    if algo in {"Otsu's", 'Triangle', 'Adaptive Mean', 'Adaptive Gaussian'}:
+        if 'constant_c' not in step: raise KeyError("Missing required parameter 'constant_c' for Above to White")
+        check_type(step['constant_c'], int, 'constant_c')
+        constant_c = step['constant_c']
+    else:
+        constant_c = 0
+        
+    if algo in {'Adaptive Mean', 'Adaptive Gaussian'}:
+        if 'block_size_x' not in step: raise KeyError("Missing required parameter 'block_size_x' for Above to White")
+        if 'block_size_y' not in step: raise KeyError("Missing required parameter 'block_size_y' for Above to White")
+        check_type(step['block_size_x'], int, 'block_size_x')
+        check_type(step['block_size_y'], int, 'block_size_y')
+        block_size_x = step['block_size_x']
+        block_size_y = step['block_size_y']
+    else:
+        block_size_x = 3
+        block_size_y = 3
+        
+    if algo == 'Adaptive Gaussian':
+        if 'sigma_x' not in step: raise KeyError("Missing required parameter 'sigma_x' for Above to White")
+        if 'sigma_y' not in step: raise KeyError("Missing required parameter 'sigma_y' for Above to White")
+        if type(step['sigma_x']) not in (int, float):
+            raise TypeError(f"sigma_x must be int or float. Got {type(step['sigma_x']).__name__}")
+        if type(step['sigma_y']) not in (int, float):
+            raise TypeError(f"sigma_y must be int or float. Got {type(step['sigma_y']).__name__}")
+        sigma_x = float(step['sigma_x'])
+        sigma_y = float(step['sigma_y'])
+    else:
+        sigma_x = 0.0
+        sigma_y = 0.0
+        
+    if condition in {'Inside Range [Min, Max]', 'Outside Range'}:
+        if 'value_max' not in step: raise KeyError("Missing required parameter 'value_max' for Above to White")
+        check_type(step['value_max'], int, 'value_max')
+        val_max = step['value_max']
+        check_range(val_max, 0, 255, 'value_max')
+    else:
+        val_max = 255
+        
     if not fill_color_param.startswith('#') or len(fill_color_param) != 7:
         raise ValueError(f"fill_color must be a Hex string starting with '#' and length 7. Got '{fill_color_param}'")
         

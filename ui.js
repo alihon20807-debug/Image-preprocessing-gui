@@ -119,13 +119,27 @@ export function updateStepCardParamVisibility(stepCard, step) {
     if (!schema || !schema.params) return;
     
     for (const [paramName, paramDef] of Object.entries(schema.params)) {
-        if (!paramDef.visible_if) continue;
+        if (!paramDef.visible_if && !(step.type === 'fill' && (paramName === 'target_color' || paramName === 'tolerance'))) continue;
         
         let isVisible = true;
-        for (const [depName, allowedValues] of Object.entries(paramDef.visible_if)) {
-            if (!allowedValues.includes(step[depName])) {
+        
+        // Custom override for target_color / tolerance under fill step (Bug 14 / Bug 24)
+        if (step.type === 'fill' && (paramName === 'target_color' || paramName === 'tolerance')) {
+            const mode = step.fill_mode;
+            const chromaModes = ['Color Replacement (Chroma Key)', 'Content-Aware Inpainting (NS)', 'Content-Aware Inpainting (Telea)'];
+            if (chromaModes.includes(mode)) {
+                isVisible = true;
+            } else if (mode === 'Hole Filling (Contours)') {
+                isVisible = step.use_target_color === true;
+            } else {
                 isVisible = false;
-                break;
+            }
+        } else {
+            for (const [depName, allowedValues] of Object.entries(paramDef.visible_if)) {
+                if (!allowedValues.includes(step[depName])) {
+                    isVisible = false;
+                    break;
+                }
             }
         }
         
@@ -190,7 +204,17 @@ function renderStepParams(step, index) {
         
         // Evaluate dynamic visible_if logic
         let isVisible = true;
-        if (paramDef.visible_if) {
+        if (step.type === 'fill' && (paramName === 'target_color' || paramName === 'tolerance')) {
+            const mode = step.fill_mode;
+            const chromaModes = ['Color Replacement (Chroma Key)', 'Content-Aware Inpainting (NS)', 'Content-Aware Inpainting (Telea)'];
+            if (chromaModes.includes(mode)) {
+                isVisible = true;
+            } else if (mode === 'Hole Filling (Contours)') {
+                isVisible = step.use_target_color === true;
+            } else {
+                isVisible = false;
+            }
+        } else if (paramDef.visible_if) {
             for (const [depName, allowedValues] of Object.entries(paramDef.visible_if)) {
                 if (!allowedValues.includes(step[depName])) {
                     isVisible = false;
@@ -204,18 +228,20 @@ function renderStepParams(step, index) {
         html += `<div class="control-group param-group" data-param-name="${escapeHTML(paramName)}" style="display: ${displayStyle};">`;
         
         if (paramDef.type === 'int' || paramDef.type === 'float') {
-            const valDisplay = (paramDef.type === 'float') ? step[paramName].toFixed(1) : (step[paramName] >= 0 && paramName === 'brightness' ? '+' + step[paramName] : step[paramName]);
+            const rawVal = step[paramName] !== undefined && step[paramName] !== null ? step[paramName] : paramDef.default;
+            const valDisplay = (paramDef.type === 'float') ? rawVal.toFixed(1) : (rawVal >= 0 && paramName === 'brightness' ? '+' + rawVal : rawVal);
             html += `
                 <div class="slider-header">
                     <span class="control-label">${escapeHTML(paramDef.label)}</span>
                     <span class="slider-value" id="val-${escapeHTML(paramName)}-${escapeHTML(step.id)}">${escapeHTML(valDisplay)}</span>
                 </div>
-                <input type="range" class="custom-range" data-param="${escapeHTML(paramName)}" min="${escapeHTML(paramDef.min)}" max="${escapeHTML(paramDef.max)}" step="${escapeHTML(paramDef.step)}" value="${escapeHTML(step[paramName])}">
+                <input type="range" class="custom-range" data-param="${escapeHTML(paramName)}" min="${escapeHTML(paramDef.min)}" max="${escapeHTML(paramDef.max)}" step="${escapeHTML(paramDef.step)}" value="${escapeHTML(rawVal)}">
             `;
         } else if (paramDef.type === 'select') {
+            const selectVal = step[paramName] !== undefined && step[paramName] !== null ? step[paramName] : paramDef.default;
             let selectOptions = '';
             paramDef.options.forEach(opt => {
-                selectOptions += `<option value="${escapeHTML(opt)}" ${step[paramName] === opt ? 'selected' : ''}>${escapeHTML(opt)}</option>`;
+                selectOptions += `<option value="${escapeHTML(opt)}" ${selectVal === opt ? 'selected' : ''}>${escapeHTML(opt)}</option>`;
             });
             html += `
                 <span class="control-label">${escapeHTML(paramDef.label)}</span>
@@ -226,19 +252,21 @@ function renderStepParams(step, index) {
                 </div>
             `;
         } else if (paramDef.type === 'color') {
+            const colorVal = step[paramName] !== undefined && step[paramName] !== null ? step[paramName] : paramDef.default;
             html += `
                 <span class="control-label">${escapeHTML(paramDef.label)}</span>
                 <div class="color-picker-wrapper">
-                    <input type="color" class="custom-color-picker" data-param="${escapeHTML(paramName)}" value="${escapeHTML(step[paramName])}">
-                    <input type="text" class="custom-color-text" data-param="${escapeHTML(paramName)}" value="${escapeHTML(step[paramName])}">
+                    <input type="color" class="custom-color-picker" data-param="${escapeHTML(paramName)}" value="${escapeHTML(colorVal)}">
+                    <input type="text" class="custom-color-text" data-param="${escapeHTML(paramName)}" value="${escapeHTML(colorVal)}">
                 </div>
             `;
         } else if (paramDef.type === 'bool') {
+            const boolVal = step[paramName] !== undefined && step[paramName] !== null ? step[paramName] : paramDef.default;
             html += `
                 <div class="toggle-container">
                     <span class="control-label">${escapeHTML(paramDef.label)}</span>
                     <label class="switch">
-                        <input type="checkbox" data-param="${escapeHTML(paramName)}" ${step[paramName] ? 'checked' : ''}>
+                        <input type="checkbox" data-param="${escapeHTML(paramName)}" ${boolVal ? 'checked' : ''}>
                         <span class="slider-switch"></span>
                     </label>
                 </div>

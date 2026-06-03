@@ -5,6 +5,8 @@ export const state = {
     originalImage: new Image(),
     originalWidth: 0,
     originalHeight: 0,
+    sourceWidth: 0,
+    sourceHeight: 0,
 
     // Shared transform state (synchronized zooming & panning)
     transform: { x: 0, y: 0, scale: 1 },
