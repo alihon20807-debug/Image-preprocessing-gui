@@ -282,10 +282,6 @@ def process():
             # Ensure baseline and processed have identical spatial dimensions for comparison view
             if baseline_img.shape[:2] != processed.shape[:2]:
                 baseline_img = cv2.resize(baseline_img, (processed.shape[1], processed.shape[0]))
-            if len(baseline_img.shape) == 2 and len(processed.shape) == 3:
-                baseline_img = cv2.cvtColor(baseline_img, cv2.COLOR_GRAY2BGR)
-            elif len(baseline_img.shape) == 3 and len(processed.shape) == 2:
-                baseline_img = cv2.cvtColor(baseline_img, cv2.COLOR_BGR2GRAY)
                 
             # Optimize baseline transmission if it exactly matches the original
             is_baseline_same_as_original = False
