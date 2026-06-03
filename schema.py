@@ -824,7 +824,7 @@ OPERATIONS_SCHEMA = {
                 "type": "color",
                 "default": "#000000",
                 "visible_if": {
-                    "fill_mode": ["Color Replacement (Chroma Key)", "Content-Aware Inpainting (NS)", "Content-Aware Inpainting (Telea)"]
+                    "fill_mode": ["Hole Filling (Contours)", "Color Replacement (Chroma Key)", "Content-Aware Inpainting (NS)", "Content-Aware Inpainting (Telea)"]
                 }
             },
             "tolerance": {
@@ -835,7 +835,7 @@ OPERATIONS_SCHEMA = {
                 "max": 255,
                 "step": 1,
                 "visible_if": {
-                    "fill_mode": ["Color Replacement (Chroma Key)", "Content-Aware Inpainting (NS)", "Content-Aware Inpainting (Telea)"]
+                    "fill_mode": ["Hole Filling (Contours)", "Color Replacement (Chroma Key)", "Content-Aware Inpainting (NS)", "Content-Aware Inpainting (Telea)"]
                 }
             },
             "min_area": {
@@ -1042,7 +1042,7 @@ def validate_step_params(step_type, params):
         # Odd positive constraints
         if param_def.get("odd_only", False):
             is_odd_required = True
-            if step_type == 'blur' and step.get('blur_type') == 'Box Blur':
+            if step_type == 'blur' and params.get('blur_type') == 'Box Blur':
                 is_odd_required = False
                 
             if is_odd_required:

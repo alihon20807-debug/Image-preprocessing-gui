@@ -240,7 +240,7 @@ export function registerCustomNodes(onGraphChangeCallback) {
                             let isVisible = true;
                             
                             // Custom override for target_color / tolerance under fill step (Bug 14 / Bug 24)
-                            if (stepType === 'fill' && (paramName === 'target_color' || paramName === 'tolerance')) {
+                            if (opKey === 'fill' && (paramName === 'target_color' || paramName === 'tolerance')) {
                                 const mode = this.properties.fill_mode;
                                 const chromaModes = ['Color Replacement (Chroma Key)', 'Content-Aware Inpainting (NS)', 'Content-Aware Inpainting (Telea)'];
                                 if (chromaModes.includes(mode)) {
