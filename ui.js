@@ -1,25 +1,55 @@
-import { state, elements, createDefaultLayer } from './state.js';
+// ui.js
+// Dynamic Schema-Driven UI Generator for Preprocessing Studio
+
+import { state, elements, createDefaultStep } from './state.js';
 import { updateComparisonView } from './viewer.js';
 
+export function escapeHTML(str) {
+    if (str === null || str === undefined) return '';
+    const StringClass = String(str);
+    return StringClass.replace(/[&<>'"]/g, 
+        tag => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            "'": '&#39;',
+            '"': '&quot;'
+        }[tag] || tag)
+    );
+}
+
 export function generateStepId() {
-    return 'step_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+    return 'step_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
 }
 
 export function getStepName(type) {
+    const schema = state.schema[type];
+    return schema ? schema.name : 'Transformation';
+}
+
+export function getStepCategory(type) {
     switch (type) {
-        case 'grayscale': return 'Convert to Grayscale';
-        case 'invert': return 'Invert Colors';
-        case 'contrast': return 'Contrast & Brightness';
-        case 'blur': return 'Gaussian Blur';
-        case 'threshold': return 'Thresholding';
-        case 'above_to_white': return 'Above to White';
-        case 'edges': return 'Edge Detection';
-        case 'upsample': return 'Upsampling (Scale Up)';
-        case 'downsample': return 'Downsampling (Scale Down)';
-        case 'crop': return 'Crop Region';
-        case 'heal': return 'Stroke Healing';
-        case 'fill': return 'Fill Region';
-        default: return 'Transformation';
+        case 'grayscale':
+        case 'invert':
+        case 'contrast':
+            return 'cat-color';
+        case 'blur':
+        case 'heal':
+            return 'cat-filter';
+        case 'threshold':
+        case 'above_to_white':
+        case 'edges':
+        case 'edges_fill':
+            return 'cat-threshold';
+        case 'upsample':
+        case 'downsample':
+        case 'crop':
+            return 'cat-transform';
+        case 'fill':
+        case 'blend':
+            return 'cat-blend';
+        default:
+            return '';
     }
 }
 
@@ -31,24 +61,20 @@ export function updateCompareReferenceDropdown() {
         <option value="original">Original Image</option>
     `;
     
-    state.layers.forEach((layer, lIdx) => {
-        const layerOpt = document.createElement('option');
-        layerOpt.value = layer.id;
-        layerOpt.textContent = `Layer #${lIdx + 1}: ${layer.name}` + (layer.disabled ? ' (Disabled)' : '');
-        elements.compareReferenceSelect.appendChild(layerOpt);
-        
-        layer.steps.forEach((step, sIdx) => {
-            const stepOpt = document.createElement('option');
-            stepOpt.value = step.id;
-            stepOpt.innerHTML = `&nbsp;&nbsp;&nbsp;&nbsp;└─ Step #${sIdx + 1}: ${getStepName(step.type)}` + (step.disabled ? ' (Disabled)' : '');
-            elements.compareReferenceSelect.appendChild(stepOpt);
-        });
+    state.pipeline.forEach((step, idx) => {
+        const stepOpt = document.createElement('option');
+        stepOpt.value = step.id;
+        stepOpt.textContent = `Step #${idx + 1}: ${getStepName(step.type)}` + (step.disabled ? ' (Disabled)' : '');
+        if (step.disabled) {
+            stepOpt.disabled = true;
+        }
+        elements.compareReferenceSelect.appendChild(stepOpt);
     });
     
-    // Verify if comparisonBaseline still exists, fallback if not
+    // Verify if comparisonBaseline still exists and is enabled, fallback if not
     let exists = selectedVal === "none" || selectedVal === "original";
     if (!exists) {
-        exists = state.layers.some(l => l.id === selectedVal || l.steps.some(s => s.id === selectedVal));
+        exists = state.pipeline.some(s => s.id === selectedVal && !s.disabled);
     }
     
     if (!exists) {
@@ -59,1209 +85,239 @@ export function updateCompareReferenceDropdown() {
     }
 }
 
-export function renderLayers() {
-    // Verify layer inputs and targets for validity (prevent stale IDs after deletion/moves)
-    state.layers.forEach((layer, index) => {
-        if (layer.input_source !== 'previous' && layer.input_source !== 'original') {
-            const precedingExists = state.layers.slice(0, index).some(l => l.id === layer.input_source);
-            if (!precedingExists) {
-                layer.input_source = 'previous';
-            }
-        }
-        if (layer.blend_target !== 'previous' && layer.blend_target !== 'original') {
-            const precedingExists = state.layers.slice(0, index).some(l => l.id === layer.blend_target);
-            if (!precedingExists) {
-                layer.blend_target = 'previous';
-            }
-        }
-    });
-
-    // Save sidebar scroll position to prevent jumps during swaps or updates
+export function renderPipeline() {
     const scrollContainer = document.querySelector('.sidebar-scroll');
     const prevScrollTop = scrollContainer ? scrollContainer.scrollTop : 0;
     
     elements.layersListContainer.innerHTML = '';
     
-    // Dynamically rebuild dropdown references
     updateCompareReferenceDropdown();
     
-    if (state.layers.length === 0) {
+    if (state.pipeline.length === 0) {
         elements.layersListContainer.innerHTML = `
-            <div class="pipeline-card-desc" style="text-align: center; padding: 24px 0; border: 1.5px dashed rgba(255,255,255,0.06); border-radius: 8px;">
-                No active layers.<br>Click "Add New Layer" above to create one.
+            <div class="empty-pipeline-banner">
+                <div class="empty-pipeline-icon">🎛️</div>
+                <div class="empty-pipeline-title">No Transformations Active</div>
+                <div class="empty-pipeline-text">Select an operation from the options above and click "Add Step" to begin building your pipeline.</div>
             </div>
         `;
         return;
     }
     
-    state.layers.forEach((layer, index) => {
-        const card = createLayerCardElement(layer, index);
+    state.pipeline.forEach((step, index) => {
+        const card = createPipelineCardElement(step, index);
         elements.layersListContainer.appendChild(card);
     });
     
-    // Restore sidebar scroll position
     if (scrollContainer) {
         scrollContainer.scrollTop = prevScrollTop;
     }
 }
 
-export function createLayerCardElement(layer, index) {
-    const card = document.createElement('div');
-    card.className = 'layer-card';
-    if (layer.disabled) card.classList.add('disabled-layer');
-    if (state.comparisonBaseline === layer.id) card.classList.add('active-layer');
+export function updateStepCardParamVisibility(stepCard, step) {
+    const schema = state.schema[step.type];
+    if (!schema || !schema.params) return;
     
-    card.dataset.index = index;
-    card.dataset.id = layer.id;
-    
-    // Build options for input source dropdown
-    let inputSourceOptions = `
-        <option value="previous" ${layer.input_source === 'previous' ? 'selected' : ''}>Previous Layer</option>
-        <option value="original" ${layer.input_source === 'original' ? 'selected' : ''}>Original Image</option>
-    `;
-    // Add other preceding layers as input options
-    for (let i = 0; i < index; i++) {
-        inputSourceOptions += `<option value="${state.layers[i].id}" ${layer.input_source === state.layers[i].id ? 'selected' : ''}>Layer: ${state.layers[i].name}</option>`;
-    }
-    
-    // Build options for blend target dropdown
-    let blendTargetOptions = `
-        <option value="previous" ${layer.blend_target === 'previous' ? 'selected' : ''}>Previous Layer</option>
-        <option value="original" ${layer.blend_target === 'original' ? 'selected' : ''}>Original Image</option>
-    `;
-    for (let i = 0; i < index; i++) {
-        blendTargetOptions += `<option value="${state.layers[i].id}" ${layer.blend_target === state.layers[i].id ? 'selected' : ''}>Layer: ${state.layers[i].name}</option>`;
-    }
-    
-    // Build steps HTML
-    let stepsHtml = '';
-    layer.steps.forEach((step, sIdx) => {
-        const stepCard = createPipelineCardElement(step, sIdx, layer.id);
-        stepsHtml += stepCard.outerHTML;
-    });
-    
-    const isExpanded = layer.isExpanded !== false;
-    const isBaseline = state.comparisonBaseline === layer.id;
-    
-    card.innerHTML = `
-        <div class="layer-card-header">
-            <span class="layer-drag-handle" title="Drag to Reorder">☰</span>
-            <span class="layer-expand-btn ${isExpanded ? 'expanded' : ''}" style="cursor: pointer;" title="Toggle Layer Controls">${isExpanded ? '▼' : '▶'}</span>
-            <input type="text" class="layer-title-input" value="${layer.name}" title="Click to rename layer">
-            <div class="layer-header-actions">
-                <button class="action-btn btn-toggle-layer" title="${layer.disabled ? 'Enable Layer' : 'Disable Layer'}">${layer.disabled ? '🚫' : '👁️'}</button>
-                <button class="action-btn btn-layer-baseline ${isBaseline ? 'active' : ''}" title="Set Layer Output as Baseline">⚖️</button>
-                <button class="action-btn btn-layer-up" title="Move Layer Up" ${index === 0 ? 'disabled' : ''}>▲</button>
-                <button class="action-btn btn-layer-down" title="Move Layer Down" ${index === state.layers.length - 1 ? 'disabled' : ''}>▼</button>
-                <button class="action-btn btn-delete-layer" title="Delete Layer">✕</button>
-            </div>
-        </div>
+    for (const [paramName, paramDef] of Object.entries(schema.params)) {
+        if (!paramDef.visible_if) continue;
         
-        <div class="layer-card-body ${isExpanded ? '' : 'collapsed'}">
-            <!-- Properties Grid -->
-            <div class="layer-properties-grid">
-                <div class="control-group">
-                    <span class="control-label" style="font-size: 11px;">Input Source</span>
-                    <div class="select-wrapper">
-                        <select class="custom-select select-layer-input" style="font-size: 11px; padding: 6px 10px;">
-                            ${inputSourceOptions}
-                        </select>
-                    </div>
-                </div>
-                <div class="control-group">
-                    <span class="control-label" style="font-size: 11px;">Blend Mode</span>
-                    <div class="select-wrapper">
-                        <select class="custom-select select-layer-blend" style="font-size: 11px; padding: 6px 10px;">
-                            <option value="normal" ${layer.blend_mode === 'normal' ? 'selected' : ''}>Normal (Alpha)</option>
-                            <option value="add" ${layer.blend_mode === 'add' ? 'selected' : ''}>Add</option>
-                            <option value="subtract" ${layer.blend_mode === 'subtract' ? 'selected' : ''}>Subtract</option>
-                            <option value="multiply" ${layer.blend_mode === 'multiply' ? 'selected' : ''}>Multiply</option>
-                            <option value="screen" ${layer.blend_mode === 'screen' ? 'selected' : ''}>Screen</option>
-                            <option value="difference" ${layer.blend_mode === 'difference' ? 'selected' : ''}>Difference</option>
-                            <option value="darken" ${layer.blend_mode === 'darken' ? 'selected' : ''}>Darken</option>
-                            <option value="lighten" ${layer.blend_mode === 'lighten' ? 'selected' : ''}>Lighten</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="layer-properties-grid" style="margin-top: 8px;">
-                <div class="control-group">
-                    <span class="control-label" style="font-size: 11px;">Blend Target</span>
-                    <div class="select-wrapper">
-                        <select class="custom-select select-layer-blend-target" style="font-size: 11px; padding: 6px 10px;">
-                            ${blendTargetOptions}
-                        </select>
-                    </div>
-                </div>
-                <div class="control-group">
-                    <span class="control-label" style="font-size: 11px;">Blend Upscale Filter</span>
-                    <div class="select-wrapper">
-                        <select class="custom-select select-layer-blend-interp" style="font-size: 11px; padding: 6px 10px;">
-                            <option value="Bilinear (Fast)" ${layer.blend_interpolation === 'Bilinear (Fast)' ? 'selected' : ''}>Bilinear (Fast)</option>
-                            <option value="Bicubic (Sharp)" ${layer.blend_interpolation === 'Bicubic (Sharp)' ? 'selected' : ''}>Bicubic (Sharp)</option>
-                            <option value="Lanczos (Ultra Sharp)" ${layer.blend_interpolation === 'Lanczos (Ultra Sharp)' ? 'selected' : ''}>Lanczos (Ultra Sharp)</option>
-                            <option value="Nearest Neighbor" ${layer.blend_interpolation === 'Nearest Neighbor' ? 'selected' : ''}>Nearest Neighbor</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Opacity Slider -->
-            <div class="control-group" style="gap: 4px;">
-                <div class="slider-header">
-                    <span class="control-label" style="font-size: 11px;">Layer Opacity</span>
-                    <span class="slider-value value-layer-opacity" style="font-size: 11px;">${layer.opacity}%</span>
-                </div>
-                <input type="range" class="custom-range slider-layer-opacity" min="0" max="100" step="5" value="${layer.opacity}" style="height: 4px;">
-            </div>
-            
-            <!-- Transformations List -->
-            <div class="layer-nested-steps-header">
-                <span>Transformations</span>
-            </div>
-            
-            <div class="layer-nested-steps-list">
-                ${stepsHtml}
-            </div>
-            
-            <!-- Add Step mini panel -->
-            <div class="add-step-wrapper" style="margin-top: 8px;">
-                <div class="select-wrapper" style="flex: 1;">
-                    <select class="custom-select select-mini-add-step" style="font-size: 11px; padding: 6px 10px;">
-                        <option value="grayscale">Convert to Grayscale</option>
-                        <option value="invert">Invert Colors</option>
-                        <option value="contrast">Contrast & Brightness</option>
-                        <option value="blur">Gaussian Blur</option>
-                        <option value="threshold">Thresholding</option>
-                        <option value="above_to_white">Above to White (Threshold)</option>
-                        <option value="edges">Edge Detection</option>
-                        <option value="edges_fill">Edge Detection + Fill</option>
-                        <option value="upsample">Upsampling (Scale Up)</option>
-                        <option value="downsample">Downsampling (Scale Down)</option>
-                        <option value="crop">Crop Region</option>
-                        <option value="heal">Stroke Healing</option>
-                        <option value="fill">Fill Region</option>
-                    </select>
-                </div>
-                <button class="btn btn-primary btn-add-step-mini" style="font-size: 11px; padding: 6px 12px; height: auto;">➕ Add</button>
-            </div>
-        </div>
-    `;
-    
-    return card;
+        let isVisible = true;
+        for (const [depName, allowedValues] of Object.entries(paramDef.visible_if)) {
+            if (!allowedValues.includes(step[depName])) {
+                isVisible = false;
+                break;
+            }
+        }
+        
+        const paramEl = stepCard.querySelector(`.param-group[data-param-name="${paramName}"]`);
+        if (paramEl) {
+            paramEl.style.display = isVisible ? 'block' : 'none';
+        }
+    }
 }
 
-export function createPipelineCardElement(step, index, layerId) {
-    const layerObj = state.layers.find(l => l.id === layerId);
-    const layerSteps = layerObj ? layerObj.steps : [];
+function renderStepParams(step, index) {
+    const schema = state.schema[step.type];
+    if (!schema || !schema.params) return '';
     
+    let html = '';
+    
+    // 1. Input Source Dropdown (always rendered to allow arbitrary step connections)
+    let inputOptions = `
+        <option value="previous" ${step.input_source === 'previous' ? 'selected' : ''}>Previous Step</option>
+        <option value="original" ${step.input_source === 'original' ? 'selected' : ''}>Original Image</option>
+    `;
+    for (let i = 0; i < index; i++) {
+        const prevStep = state.pipeline[i];
+        inputOptions += `<option value="${escapeHTML(prevStep.id)}" ${step.input_source === prevStep.id ? 'selected' : ''} ${prevStep.disabled ? 'disabled' : ''}>Step #${i + 1}: ${escapeHTML(getStepName(prevStep.type))}${prevStep.disabled ? ' (Disabled)' : ''}</option>`;
+    }
+    
+    html += `
+        <div class="control-group">
+            <span class="control-label">Input Source</span>
+            <div class="select-wrapper">
+                <select class="custom-select" data-param="input_source">
+                    ${inputOptions}
+                </select>
+            </div>
+        </div>
+    `;
+    
+    // 2. Render all schema parameter controls
+    for (const [paramName, paramDef] of Object.entries(schema.params)) {
+        if (paramName === 'blend_source') {
+            // Blending Source select dropdown
+            let blendOptions = `
+                <option value="previous" ${step.blend_source === 'previous' ? 'selected' : ''}>Previous Step</option>
+                <option value="original" ${step.blend_source === 'original' ? 'selected' : ''}>Original Image</option>
+            `;
+            for (let i = 0; i < index; i++) {
+                const prevStep = state.pipeline[i];
+                blendOptions += `<option value="${escapeHTML(prevStep.id)}" ${step.blend_source === prevStep.id ? 'selected' : ''} ${prevStep.disabled ? 'disabled' : ''}>Step #${i + 1}: ${escapeHTML(getStepName(prevStep.type))}${prevStep.disabled ? ' (Disabled)' : ''}</option>`;
+            }
+            html += `
+                <div class="control-group">
+                    <span class="control-label">${escapeHTML(paramDef.label)}</span>
+                    <div class="select-wrapper">
+                        <select class="custom-select" data-param="blend_source">
+                            ${blendOptions}
+                        </select>
+                    </div>
+                </div>
+            `;
+            continue;
+        }
+        
+        // Evaluate dynamic visible_if logic
+        let isVisible = true;
+        if (paramDef.visible_if) {
+            for (const [depName, allowedValues] of Object.entries(paramDef.visible_if)) {
+                if (!allowedValues.includes(step[depName])) {
+                    isVisible = false;
+                    break;
+                }
+            }
+        }
+        
+        const displayStyle = isVisible ? 'block' : 'none';
+        
+        html += `<div class="control-group param-group" data-param-name="${escapeHTML(paramName)}" style="display: ${displayStyle};">`;
+        
+        if (paramDef.type === 'int' || paramDef.type === 'float') {
+            const valDisplay = (paramDef.type === 'float') ? step[paramName].toFixed(1) : (step[paramName] >= 0 && paramName === 'brightness' ? '+' + step[paramName] : step[paramName]);
+            html += `
+                <div class="slider-header">
+                    <span class="control-label">${escapeHTML(paramDef.label)}</span>
+                    <span class="slider-value" id="val-${escapeHTML(paramName)}-${escapeHTML(step.id)}">${escapeHTML(valDisplay)}</span>
+                </div>
+                <input type="range" class="custom-range" data-param="${escapeHTML(paramName)}" min="${escapeHTML(paramDef.min)}" max="${escapeHTML(paramDef.max)}" step="${escapeHTML(paramDef.step)}" value="${escapeHTML(step[paramName])}">
+            `;
+        } else if (paramDef.type === 'select') {
+            let selectOptions = '';
+            paramDef.options.forEach(opt => {
+                selectOptions += `<option value="${escapeHTML(opt)}" ${step[paramName] === opt ? 'selected' : ''}>${escapeHTML(opt)}</option>`;
+            });
+            html += `
+                <span class="control-label">${escapeHTML(paramDef.label)}</span>
+                <div class="select-wrapper">
+                    <select class="custom-select" data-param="${escapeHTML(paramName)}">
+                        ${selectOptions}
+                    </select>
+                </div>
+            `;
+        } else if (paramDef.type === 'color') {
+            html += `
+                <span class="control-label">${escapeHTML(paramDef.label)}</span>
+                <div class="color-picker-wrapper">
+                    <input type="color" class="custom-color-picker" data-param="${escapeHTML(paramName)}" value="${escapeHTML(step[paramName])}">
+                    <input type="text" class="custom-color-text" data-param="${escapeHTML(paramName)}" value="${escapeHTML(step[paramName])}">
+                </div>
+            `;
+        } else if (paramDef.type === 'bool') {
+            html += `
+                <div class="toggle-container">
+                    <span class="control-label">${escapeHTML(paramDef.label)}</span>
+                    <label class="switch">
+                        <input type="checkbox" data-param="${escapeHTML(paramName)}" ${step[paramName] ? 'checked' : ''}>
+                        <span class="slider-switch"></span>
+                    </label>
+                </div>
+            `;
+        }
+        
+        html += `</div>`;
+    }
+    
+    return html;
+}
+
+export function createPipelineCardElement(step, index) {
     const card = document.createElement('div');
-    card.className = 'pipeline-card';
+    const categoryClass = getStepCategory(step.type);
+    card.className = `pipeline-card ${categoryClass}`;
     if (step.disabled) {
         card.classList.add('disabled-step');
     }
     if (state.comparisonBaseline === step.id) {
         card.classList.add('baseline-step');
     }
+    if (step.collapsed) {
+        card.classList.add('collapsed');
+    }
+    
     card.dataset.index = index;
     card.dataset.id = step.id;
-    card.dataset.layerId = layerId;
-    
-    let bodyHtml = '';
-    
-    if (step.type === 'grayscale') {
-        bodyHtml = `<div class="pipeline-card-desc">Converts BGR image channels to a single-channel grayscale matrix.</div>`;
-    } else if (step.type === 'invert') {
-        bodyHtml = `
-            <div class="pipeline-card-desc" style="margin-bottom: 8px;">Inverts the color values of the active channels.</div>
-            <div class="control-group">
-                <span class="control-label">Inversion Mode</span>
-                <div class="select-wrapper">
-                    <select class="custom-select" data-param="channel_mode">
-                        <option value="Color Channels" ${step.channel_mode === 'Color Channels' ? 'selected' : ''}>Color Channels</option>
-                        <option value="Grayscale" ${step.channel_mode === 'Grayscale' ? 'selected' : ''}>Grayscale Mode</option>
-                    </select>
-                </div>
-            </div>
-        `;
-    } else if (step.type === 'contrast') {
-        bodyHtml = `
-            <div class="control-group">
-                <div class="slider-header">
-                    <span class="control-label">Contrast</span>
-                    <span class="slider-value" id="val-contrast-${step.id}">${step.contrast.toFixed(1)}x</span>
-                </div>
-                <input type="range" class="custom-range" data-param="contrast" min="0.5" max="3.0" step="0.1" value="${step.contrast}">
-            </div>
-            <div class="control-group">
-                <div class="slider-header">
-                    <span class="control-label">Brightness</span>
-                    <span class="slider-value" id="val-brightness-${step.id}">${step.brightness >= 0 ? '+' + step.brightness : step.brightness}</span>
-                </div>
-                <input type="range" class="custom-range" data-param="brightness" min="-100" max="100" step="5" value="${step.brightness}">
-            </div>
-        `;
-    } else if (step.type === 'blur') {
-        bodyHtml = `
-            <div class="control-group">
-                <span class="control-label">Blur Type</span>
-                <div class="select-wrapper">
-                    <select class="custom-select" data-param="blur_type">
-                        <option value="Gaussian Blur" ${step.blur_type === 'Gaussian Blur' ? 'selected' : ''}>Gaussian Blur</option>
-                        <option value="Median Blur" ${step.blur_type === 'Median Blur' ? 'selected' : ''}>Median Blur</option>
-                        <option value="Bilateral Filter" ${step.blur_type === 'Bilateral Filter' ? 'selected' : ''}>Bilateral Filter</option>
-                        <option value="Box Blur" ${step.blur_type === 'Box Blur' ? 'selected' : ''}>Box Blur</option>
-                    </select>
-                </div>
-            </div>
-            
-            <!-- Gaussian / Box Blur Kernel Sliders -->
-            <div class="control-group" id="grp-blur-ksize-${step.id}" style="display: ${step.blur_type === 'Gaussian Blur' || step.blur_type === 'Box Blur' ? 'block' : 'none'}">
-                <div class="control-group" style="margin-bottom: 12px;">
-                    <div class="slider-header">
-                        <span class="control-label">Kernel Width (X, Odd)</span>
-                        <span class="slider-value" id="val-blur-kernel-x-${step.id}">${step.kernel_x}px</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="kernel_x" min="1" max="25" step="2" value="${step.kernel_x}">
-                </div>
-                <div class="control-group" style="margin-bottom: 0;">
-                    <div class="slider-header">
-                        <span class="control-label">Kernel Height (Y, Odd)</span>
-                        <span class="slider-value" id="val-blur-kernel-y-${step.id}">${step.kernel_y}px</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="kernel_y" min="1" max="25" step="2" value="${step.kernel_y}">
-                </div>
-            </div>
-            
-            <!-- Gaussian Blur Sigma Sliders -->
-            <div class="control-group" id="grp-blur-sigma-${step.id}" style="display: ${step.blur_type === 'Gaussian Blur' ? 'block' : 'none'}">
-                <div class="control-group" style="margin-bottom: 12px;">
-                    <div class="slider-header">
-                        <span class="control-label">Sigma X (0 = auto)</span>
-                        <span class="slider-value" id="val-blur-sigma-x-${step.id}">${step.sigma_x.toFixed(1)}</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="sigma_x" min="0" max="10" step="0.5" value="${step.sigma_x}">
-                </div>
-                <div class="control-group" style="margin-bottom: 0;">
-                    <div class="slider-header">
-                        <span class="control-label">Sigma Y (0 = auto)</span>
-                        <span class="slider-value" id="val-blur-sigma-y-${step.id}">${step.sigma_y.toFixed(1)}</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="sigma_y" min="0" max="10" step="0.5" value="${step.sigma_y}">
-                </div>
-            </div>
-            
-            <!-- Median Blur Kernel Slider -->
-            <div class="control-group" id="grp-blur-median-${step.id}" style="display: ${step.blur_type === 'Median Blur' ? 'block' : 'none'}">
-                <div class="slider-header">
-                    <span class="control-label">Kernel Size (Odd)</span>
-                    <span class="slider-value" id="val-blur-kernel-${step.id}">${step.kernel}px</span>
-                </div>
-                <input type="range" class="custom-range" data-param="kernel" min="3" max="25" step="2" value="${step.kernel}">
-            </div>
-            
-            <!-- Bilateral Filter controls -->
-            <div class="control-group" id="grp-blur-bilateral-${step.id}" style="display: ${step.blur_type === 'Bilateral Filter' ? 'block' : 'none'}">
-                <div class="control-group" style="margin-bottom: 12px;">
-                    <div class="slider-header">
-                        <span class="control-label">Neighborhood Diameter</span>
-                        <span class="slider-value" id="val-blur-diameter-${step.id}">${step.diameter}px</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="diameter" min="1" max="15" step="1" value="${step.diameter}">
-                </div>
-                <div class="control-group" style="margin-bottom: 12px;">
-                    <div class="slider-header">
-                        <span class="control-label">Sigma Color</span>
-                        <span class="slider-value" id="val-blur-sigmacolor-${step.id}">${step.sigma_color}</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="sigma_color" min="10" max="150" step="5" value="${step.sigma_color}">
-                </div>
-                <div class="control-group" style="margin-bottom: 0;">
-                    <div class="slider-header">
-                        <span class="control-label">Sigma Space</span>
-                        <span class="slider-value" id="val-blur-sigmaspace-${step.id}">${step.sigma_space}</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="sigma_space" min="10" max="150" step="5" value="${step.sigma_space}">
-                </div>
-            </div>
-        `;
-    } else if (step.type === 'threshold') {
-        const isGlobal = ['Binary Thresholding', 'Binary Thresholding Inverted', 'Truncate Thresholding', 'Threshold to Zero', 'Threshold to Zero Inverted'].includes(step.mode);
-        const isAdaptive = ['Adaptive Mean', 'Adaptive Mean Inverted', 'Adaptive Gaussian', 'Adaptive Gaussian Inverted'].includes(step.mode);
-        const isAuto = ["Otsu's Thresholding", "Otsu's Thresholding Inverted", 'Triangle Thresholding', 'Triangle Thresholding Inverted'].includes(step.mode);
-        const isSingleColor = ['Single Color Thresholding', 'Single Color Thresholding Inverted'].includes(step.mode);
-        const hasConstantC = isAdaptive || isAuto;
-        const hasSigmas = ['Adaptive Gaussian', 'Adaptive Gaussian Inverted'].includes(step.mode);
-        
-        bodyHtml = `
-            <div class="control-group">
-                <span class="control-label">Threshold Mode</span>
-                <div class="select-wrapper">
-                    <select class="custom-select" data-param="mode">
-                        <option value="Binary Thresholding" ${step.mode === 'Binary Thresholding' ? 'selected' : ''}>Binary Thresholding</option>
-                        <option value="Binary Thresholding Inverted" ${step.mode === 'Binary Thresholding Inverted' ? 'selected' : ''}>Binary Thresholding (Inverted)</option>
-                        <option value="Truncate Thresholding" ${step.mode === 'Truncate Thresholding' ? 'selected' : ''}>Truncate Thresholding</option>
-                        <option value="Threshold to Zero" ${step.mode === 'Threshold to Zero' ? 'selected' : ''}>Threshold to Zero</option>
-                        <option value="Threshold to Zero Inverted" ${step.mode === 'Threshold to Zero Inverted' ? 'selected' : ''}>Threshold to Zero (Inverted)</option>
-                        <option value="Otsu's Thresholding" ${step.mode === "Otsu's Thresholding" ? 'selected' : ''}>Otsu's Thresholding</option>
-                        <option value="Otsu's Thresholding Inverted" ${step.mode === "Otsu's Thresholding Inverted" ? 'selected' : ''}>Otsu's (Inverted)</option>
-                        <option value="Triangle Thresholding" ${step.mode === 'Triangle Thresholding' ? 'selected' : ''}>Triangle Thresholding</option>
-                        <option value="Triangle Thresholding Inverted" ${step.mode === 'Triangle Thresholding Inverted' ? 'selected' : ''}>Triangle (Inverted)</option>
-                        <option value="Adaptive Mean" ${step.mode === 'Adaptive Mean' ? 'selected' : ''}>Adaptive Mean</option>
-                        <option value="Adaptive Mean Inverted" ${step.mode === 'Adaptive Mean Inverted' ? 'selected' : ''}>Adaptive Mean (Inverted)</option>
-                        <option value="Adaptive Gaussian" ${step.mode === 'Adaptive Gaussian' ? 'selected' : ''}>Adaptive Gaussian</option>
-                        <option value="Adaptive Gaussian Inverted" ${step.mode === 'Adaptive Gaussian Inverted' ? 'selected' : ''}>Adaptive Gaussian (Inverted)</option>
-                        <option value="Single Color Thresholding" ${step.mode === 'Single Color Thresholding' ? 'selected' : ''}>Single Color Thresholding</option>
-                        <option value="Single Color Thresholding Inverted" ${step.mode === 'Single Color Thresholding Inverted' ? 'selected' : ''}>Single Color (Inverted)</option>
-                    </select>
-                </div>
-            </div>
-            
-            <div class="control-group">
-                <span class="control-label">Channel Mode</span>
-                <div class="select-wrapper">
-                    <select class="custom-select" data-param="channel_mode">
-                        <option value="Grayscale" ${step.channel_mode === 'Grayscale' ? 'selected' : ''}>Grayscale Mode</option>
-                        <option value="Color Channels" ${step.channel_mode === 'Color Channels' ? 'selected' : ''}>Color Channels</option>
-                    </select>
-                </div>
-            </div>
-            
-            <div class="control-group">
-                <span class="control-label">Target Fill Color</span>
-                <input type="color" class="custom-color-picker" data-param="fill_color" value="${step.fill_color}" style="width: 100%; height: 36px; border: none; border-radius: 6px; cursor: pointer; background: transparent; padding: 0;">
-            </div>
-            
-            <!-- Target Color and Tolerance (Single Color Thresholding only) -->
-            <div class="control-group" id="grp-thresh-target-color-${step.id}" style="display: ${isSingleColor ? 'block' : 'none'}">
-                <span class="control-label">Match Target Color</span>
-                <input type="color" class="custom-color-picker" data-param="target_color" value="${step.target_color || '#000000'}" style="width: 100%; height: 36px; border: none; border-radius: 6px; cursor: pointer; background: transparent; padding: 0;">
-            </div>
-            
-            <div class="control-group" id="grp-thresh-tolerance-${step.id}" style="display: ${isSingleColor ? 'block' : 'none'}">
-                <div class="slider-header">
-                    <span class="control-label">Match Tolerance</span>
-                    <span class="slider-value" id="val-thresh-tolerance-${step.id}">${step.tolerance !== undefined ? step.tolerance : 30}</span>
-                </div>
-                <input type="range" class="custom-range" data-param="tolerance" min="0" max="255" step="1" value="${step.tolerance !== undefined ? step.tolerance : 30}">
-            </div>
-            
-            <!-- Global Threshold Value Slider -->
-            <div class="control-group" id="grp-thresh-val-${step.id}" style="display: ${isGlobal ? 'block' : 'none'}">
-                <div class="slider-header">
-                    <span class="control-label">Threshold Value</span>
-                    <span class="slider-value" id="val-thresh-${step.id}">${step.value}</span>
-                </div>
-                <input type="range" class="custom-range" data-param="value" min="0" max="255" step="1" value="${step.value}">
-            </div>
-            
-            <!-- Adaptive Block Size Slider -->
-            <div class="control-group" id="grp-thresh-block-${step.id}" style="display: ${isAdaptive ? 'block' : 'none'}">
-                <div class="slider-header">
-                    <span class="control-label">Adaptive Block Size (Odd)</span>
-                    <span class="slider-value" id="val-thresh-blocksize-${step.id}">${step.block_size}px</span>
-                </div>
-                <input type="range" class="custom-range" data-param="block_size" min="3" max="99" step="2" value="${step.block_size}">
-            </div>
-            
-            <!-- Constant C Offset Slider -->
-            <div class="control-group" id="grp-thresh-c-${step.id}" style="display: ${hasConstantC ? 'block' : 'none'}">
-                <div class="slider-header">
-                    <span class="control-label">Constant C Offset</span>
-                    <span class="slider-value" id="val-thresh-c-${step.id}">${step.constant_c >= 0 ? '+' + step.constant_c : step.constant_c}</span>
-                </div>
-                <input type="range" class="custom-range" data-param="constant_c" min="-100" max="100" step="1" value="${step.constant_c}">
-            </div>
-            
-            <!-- Gaussian Blur Sigmas -->
-            <div class="control-group" id="grp-thresh-sigmas-${step.id}" style="display: ${hasSigmas ? 'block' : 'none'}">
-                <div class="control-group" style="margin-bottom: 12px;">
-                    <div class="slider-header">
-                        <span class="control-label">Sigma X (0 = auto)</span>
-                        <span class="slider-value" id="val-thresh-sigmax-${step.id}">${step.sigma_x.toFixed(1)}</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="sigma_x" min="0" max="10" step="0.5" value="${step.sigma_x}">
-                </div>
-                <div class="control-group" style="margin-bottom: 0;">
-                    <div class="slider-header">
-                        <span class="control-label">Sigma Y (0 = auto)</span>
-                        <span class="slider-value" id="val-thresh-sigmay-${step.id}">${step.sigma_y.toFixed(1)}</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="sigma_y" min="0" max="10" step="0.5" value="${step.sigma_y}">
-                </div>
-            </div>
-        `;
-    } else if (step.type === 'above_to_white') {
-        const isAdaptive = ['Adaptive Mean', 'Adaptive Gaussian'].includes(step.algorithm);
-        const hasConstantC = ['Adaptive Mean', 'Adaptive Gaussian', "Otsu's", 'Triangle'].includes(step.algorithm);
-        const hasSigmas = step.algorithm === 'Adaptive Gaussian';
-        const hasMaxThresh = ['Inside Range [Min, Max]', 'Outside Range'].includes(step.condition);
-        
-        const blockSizeX = step.block_size_x !== undefined ? step.block_size_x : (step.block_size || 11);
-        const blockSizeY = step.block_size_y !== undefined ? step.block_size_y : (step.block_size || 11);
-        
-        bodyHtml = `
-            <div class="control-group">
-                <span class="control-label">Algorithm</span>
-                <div class="select-wrapper">
-                    <select class="custom-select" data-param="algorithm">
-                        <option value="Global" ${step.algorithm === 'Global' ? 'selected' : ''}>Global Thresholding</option>
-                        <option value="Otsu's" ${step.algorithm === "Otsu's" ? 'selected' : ''}>Otsu's Thresholding</option>
-                        <option value="Triangle" ${step.algorithm === 'Triangle' ? 'selected' : ''}>Triangle Thresholding</option>
-                        <option value="Adaptive Mean" ${step.algorithm === 'Adaptive Mean' ? 'selected' : ''}>Adaptive Mean</option>
-                        <option value="Adaptive Gaussian" ${step.algorithm === 'Adaptive Gaussian' ? 'selected' : ''}>Adaptive Gaussian</option>
-                    </select>
-                </div>
-            </div>
-            
-            <div class="control-group">
-                <span class="control-label">Channel Mode</span>
-                <div class="select-wrapper">
-                    <select class="custom-select" data-param="channel_mode">
-                        <option value="Grayscale" ${step.channel_mode === 'Grayscale' ? 'selected' : ''}>Grayscale Mode</option>
-                        <option value="Color Channels" ${step.channel_mode === 'Color Channels' ? 'selected' : ''}>Color Channels</option>
-                    </select>
-                </div>
-            </div>
-            
-            <div class="control-group">
-                <span class="control-label">Condition</span>
-                <div class="select-wrapper">
-                    <select class="custom-select" data-param="condition">
-                        <option value="Above or Equal (>=)" ${step.condition === 'Above or Equal (>=)' ? 'selected' : ''}>Above or Equal (>=)</option>
-                        <option value="Above (>)" ${step.condition === 'Above (>)' ? 'selected' : ''}>Above (&gt;)</option>
-                        <option value="Below (<)" ${step.condition === 'Below (<)' ? 'selected' : ''}>Below (&lt;)</option>
-                        <option value="Below or Equal (<=)" ${step.condition === 'Below or Equal (<=)' ? 'selected' : ''}>Below or Equal (&lt;=)</option>
-                        <option value="Inside Range [Min, Max]" ${step.condition === 'Inside Range [Min, Max]' ? 'selected' : ''}>Inside Range [Min, Max]</option>
-                        <option value="Outside Range" ${step.condition === 'Outside Range' ? 'selected' : ''}>Outside Range</option>
-                    </select>
-                </div>
-            </div>
-            
-            <div class="control-group">
-                <span class="control-label">Target Fill Color</span>
-                <input type="color" class="custom-color-picker" data-param="fill_color" value="${step.fill_color}" style="width: 100%; height: 36px; border: none; border-radius: 6px; cursor: pointer; background: transparent; padding: 0;">
-            </div>
-            
-            <!-- Threshold Value / Min Value Slider -->
-            <div class="control-group" id="grp-above-to-white-val-${step.id}" style="display: ${step.algorithm === 'Global' ? 'block' : 'none'}">
-                <div class="slider-header">
-                    <span class="control-label">${hasMaxThresh ? 'Threshold Min Value' : 'Threshold Value'}</span>
-                    <span class="slider-value" id="val-above-to-white-val-${step.id}">${step.value}</span>
-                </div>
-                <input type="range" class="custom-range" data-param="value" min="0" max="255" step="1" value="${step.value}">
-            </div>
-            
-            <!-- Threshold Max Value Slider -->
-            <div class="control-group" id="grp-above-to-white-max-${step.id}" style="display: ${hasMaxThresh ? 'block' : 'none'}">
-                <div class="slider-header">
-                    <span class="control-label">Threshold Max Value</span>
-                    <span class="slider-value" id="val-above-to-white-maxval-${step.id}">${step.value_max}</span>
-                </div>
-                <input type="range" class="custom-range" data-param="value_max" min="0" max="255" step="1" value="${step.value_max}">
-            </div>
-            
-            <!-- Adaptive Kernel Sliders -->
-            <div class="control-group" id="grp-above-to-white-block-${step.id}" style="display: ${isAdaptive ? 'block' : 'none'}">
-                <div class="control-group" style="margin-bottom: 12px;">
-                    <div class="slider-header">
-                        <span class="control-label">Kernel Width (X, Odd)</span>
-                        <span class="slider-value" id="val-above-to-white-blocksizex-${step.id}">${blockSizeX}px</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="block_size_x" min="3" max="99" step="2" value="${blockSizeX}">
-                </div>
-                <div class="control-group" style="margin-bottom: 0;">
-                    <div class="slider-header">
-                        <span class="control-label">Kernel Height (Y, Odd)</span>
-                        <span class="slider-value" id="val-above-to-white-blocksizey-${step.id}">${blockSizeY}px</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="block_size_y" min="3" max="99" step="2" value="${blockSizeY}">
-                </div>
-            </div>
-            
-            <!-- Constant C Offset Slider -->
-            <div class="control-group" id="grp-above-to-white-c-${step.id}" style="display: ${hasConstantC ? 'block' : 'none'}">
-                <div class="slider-header">
-                    <span class="control-label">Constant C Offset</span>
-                    <span class="slider-value" id="val-above-to-white-c-${step.id}">${step.constant_c >= 0 ? '+' + step.constant_c : step.constant_c}</span>
-                </div>
-                <input type="range" class="custom-range" data-param="constant_c" min="-100" max="100" step="1" value="${step.constant_c}">
-            </div>
-            
-            <!-- Gaussian Blur Sigmas -->
-            <div class="control-group" id="grp-above-to-white-sigmas-${step.id}" style="display: ${hasSigmas ? 'block' : 'none'}">
-                <div class="control-group" style="margin-bottom: 12px;">
-                    <div class="slider-header">
-                        <span class="control-label">Sigma X (0 = auto)</span>
-                        <span class="slider-value" id="val-above-to-white-sigmax-${step.id}">${step.sigma_x.toFixed(1)}</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="sigma_x" min="0" max="10" step="0.5" value="${step.sigma_x}">
-                </div>
-                <div class="control-group" style="margin-bottom: 0;">
-                    <div class="slider-header">
-                        <span class="control-label">Sigma Y (0 = auto)</span>
-                        <span class="slider-value" id="val-above-to-white-sigmay-${step.id}">${step.sigma_y.toFixed(1)}</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="sigma_y" min="0" max="10" step="0.5" value="${step.sigma_y}">
-                </div>
-            </div>
-        `;
-    } else if (step.type === 'edges') {
-        bodyHtml = `
-            <div class="control-group">
-                <span class="control-label">Algorithm</span>
-                <div class="select-wrapper">
-                    <select class="custom-select" data-param="algorithm">
-                        <option value="Canny" ${step.algorithm === 'Canny' ? 'selected' : ''}>Canny Edge Detector</option>
-                        <option value="Sobel" ${step.algorithm === 'Sobel' ? 'selected' : ''}>Sobel Filter</option>
-                        <option value="Scharr" ${step.algorithm === 'Scharr' ? 'selected' : ''}>Scharr Filter</option>
-                        <option value="Laplacian" ${step.algorithm === 'Laplacian' ? 'selected' : ''}>Laplacian Filter</option>
-                    </select>
-                </div>
-            </div>
-            
-            <div class="control-group">
-                <span class="control-label">Channel Mode</span>
-                <div class="select-wrapper">
-                    <select class="custom-select" data-param="channel_mode">
-                        <option value="Grayscale" ${step.channel_mode === 'Grayscale' ? 'selected' : ''}>Grayscale</option>
-                        <option value="Color Channels" ${step.channel_mode === 'Color Channels' ? 'selected' : ''}>Color Channels</option>
-                    </select>
-                </div>
-            </div>
-            
-            <!-- Canny-Specific Thresholds -->
-            <div class="control-group" id="grp-edges-canny-${step.id}" style="display: ${step.algorithm === 'Canny' ? 'block' : 'none'}">
-                <div class="control-group" style="margin-bottom: 12px;">
-                    <div class="slider-header">
-                        <span class="control-label">Low Threshold</span>
-                        <span class="slider-value" id="val-edges-low-${step.id}">${step.low}</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="low" min="0" max="255" step="5" value="${step.low}">
-                </div>
-                <div class="control-group" style="margin-bottom: 12px;">
-                    <div class="slider-header">
-                        <span class="control-label">High Threshold</span>
-                        <span class="slider-value" id="val-edges-high-${step.id}">${step.high}</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="high" min="0" max="255" step="5" value="${step.high}">
-                </div>
-                <div class="control-group" style="margin-bottom: 12px;">
-                    <span class="control-label">Aperture Size</span>
-                    <div class="select-wrapper">
-                        <select class="custom-select" data-param="aperture">
-                            <option value="3" ${step.aperture === 3 ? 'selected' : ''}>3 × 3</option>
-                            <option value="5" ${step.aperture === 5 ? 'selected' : ''}>5 × 5</option>
-                            <option value="7" ${step.aperture === 7 ? 'selected' : ''}>7 × 7</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="control-group" style="margin-bottom: 0;">
-                    <span class="control-label">Gradient L2 Norm</span>
-                    <div class="select-wrapper">
-                        <select class="custom-select" data-param="l2_gradient">
-                            <option value="false" ${step.l2_gradient === false ? 'selected' : ''}>L1 norm (Fast)</option>
-                            <option value="true" ${step.l2_gradient === true ? 'selected' : ''}>L2 norm (Accurate)</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Sobel & Scharr Derivatives -->
-            <div class="control-group" id="grp-edges-derivatives-${step.id}" style="display: ${step.algorithm === 'Sobel' || step.algorithm === 'Scharr' ? 'block' : 'none'}">
-                <div class="control-group" style="margin-bottom: 12px;">
-                    <span class="control-label">Derivative X Order (dx)</span>
-                    <div class="select-wrapper">
-                        <select class="custom-select" data-param="dx">
-                            <option value="0" ${step.dx === 0 ? 'selected' : ''}>0 (None)</option>
-                            <option value="1" ${step.dx === 1 ? 'selected' : ''}>1st Derivative</option>
-                            <option value="2" ${step.dx === 2 && step.algorithm === 'Sobel' ? 'selected' : ''} style="display: ${step.algorithm === 'Sobel' ? 'block' : 'none'}">2nd Derivative</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="control-group" style="margin-bottom: 0;">
-                    <span class="control-label">Derivative Y Order (dy)</span>
-                    <div class="select-wrapper">
-                        <select class="custom-select" data-param="dy">
-                            <option value="0" ${step.dy === 0 ? 'selected' : ''}>0 (None)</option>
-                            <option value="1" ${step.dy === 1 ? 'selected' : ''}>1st Derivative</option>
-                            <option value="2" ${step.dy === 2 && step.algorithm === 'Sobel' ? 'selected' : ''} style="display: ${step.algorithm === 'Sobel' ? 'block' : 'none'}">2nd Derivative</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Sobel & Laplacian Kernel Sizes -->
-            <div class="control-group" id="grp-edges-ksize-${step.id}" style="display: ${step.algorithm === 'Sobel' || step.algorithm === 'Laplacian' ? 'block' : 'none'}">
-                <span class="control-label">Sobel/Laplacian Kernel Size</span>
-                <div class="select-wrapper">
-                    <select class="custom-select" data-param="ksize">
-                        <option value="1" ${step.ksize === 1 ? 'selected' : ''}>1 × 1</option>
-                        <option value="3" ${step.ksize === 3 ? 'selected' : ''}>3 × 3</option>
-                        <option value="5" ${step.ksize === 5 ? 'selected' : ''}>5 × 5</option>
-                        <option value="7" ${step.ksize === 7 ? 'selected' : ''}>7 × 7</option>
-                    </select>
-                </div>
-            </div>
-            
-            <!-- Scale and Delta (Sobel, Scharr, Laplacian) -->
-            <div class="control-group" id="grp-edges-scale-${step.id}" style="display: ${step.algorithm !== 'Canny' ? 'block' : 'none'}">
-                <div class="control-group" style="margin-bottom: 12px;">
-                    <div class="slider-header">
-                        <span class="control-label">Scale Factor</span>
-                        <span class="slider-value" id="val-edges-scale-${step.id}">${step.scale.toFixed(1)}</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="scale" min="0.1" max="5.0" step="0.1" value="${step.scale}">
-                </div>
-                <div class="control-group" style="margin-bottom: 0;">
-                    <div class="slider-header">
-                        <span class="control-label">Delta Offset</span>
-                        <span class="slider-value" id="val-edges-delta-${step.id}">${step.delta >= 0 ? '+' + step.delta : step.delta}</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="delta" min="-100" max="100" step="5" value="${step.delta}">
-                </div>
-            </div>
-        `;
-    } else if (step.type === 'edges_fill') {
-        bodyHtml = `
-            <div style="border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 12px; margin-bottom: 12px;">
-                <span class="control-label" style="text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; opacity: 0.6; display: block; margin-bottom: 8px;">Step A: Edge Detection</span>
-                
-                <div class="control-group">
-                    <span class="control-label">Algorithm</span>
-                    <div class="select-wrapper">
-                        <select class="custom-select" data-param="algorithm">
-                            <option value="Canny" ${step.algorithm === 'Canny' ? 'selected' : ''}>Canny Edge Detector</option>
-                            <option value="Sobel" ${step.algorithm === 'Sobel' ? 'selected' : ''}>Sobel Filter</option>
-                            <option value="Scharr" ${step.algorithm === 'Scharr' ? 'selected' : ''}>Scharr Filter</option>
-                            <option value="Laplacian" ${step.algorithm === 'Laplacian' ? 'selected' : ''}>Laplacian Filter</option>
-                        </select>
-                    </div>
-                </div>
-                
-                <div class="control-group">
-                    <span class="control-label">Channel Mode</span>
-                    <div class="select-wrapper">
-                        <select class="custom-select" data-param="channel_mode">
-                            <option value="Grayscale" ${step.channel_mode === 'Grayscale' ? 'selected' : ''}>Grayscale</option>
-                            <option value="Color Channels" ${step.channel_mode === 'Color Channels' ? 'selected' : ''}>Color Channels</option>
-                        </select>
-                    </div>
-                </div>
-                
-                <!-- Canny-Specific Thresholds -->
-                <div class="control-group" id="grp-edges-canny-${step.id}" style="display: ${step.algorithm === 'Canny' ? 'block' : 'none'}">
-                    <div class="control-group" style="margin-bottom: 12px;">
-                        <div class="slider-header">
-                            <span class="control-label">Low Threshold</span>
-                            <span class="slider-value" id="val-edges-low-${step.id}">${step.low}</span>
-                        </div>
-                        <input type="range" class="custom-range" data-param="low" min="0" max="255" step="5" value="${step.low}">
-                    </div>
-                    <div class="control-group" style="margin-bottom: 12px;">
-                        <div class="slider-header">
-                            <span class="control-label">High Threshold</span>
-                            <span class="slider-value" id="val-edges-high-${step.id}">${step.high}</span>
-                        </div>
-                        <input type="range" class="custom-range" data-param="high" min="0" max="255" step="5" value="${step.high}">
-                    </div>
-                    <div class="control-group" style="margin-bottom: 12px;">
-                        <span class="control-label">Aperture Size</span>
-                        <div class="select-wrapper">
-                            <select class="custom-select" data-param="aperture">
-                                <option value="3" ${step.aperture === 3 ? 'selected' : ''}>3 × 3</option>
-                                <option value="5" ${step.aperture === 5 ? 'selected' : ''}>5 × 5</option>
-                                <option value="7" ${step.aperture === 7 ? 'selected' : ''}>7 × 7</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="control-group" style="margin-bottom: 0;">
-                        <span class="control-label">Gradient L2 Norm</span>
-                        <div class="select-wrapper">
-                            <select class="custom-select" data-param="l2_gradient">
-                                <option value="false" ${step.l2_gradient === false ? 'selected' : ''}>L1 norm (Fast)</option>
-                                <option value="true" ${step.l2_gradient === true ? 'selected' : ''}>L2 norm (Accurate)</option>
-                            </select>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Sobel & Scharr Derivatives -->
-                <div class="control-group" id="grp-edges-derivatives-${step.id}" style="display: ${step.algorithm === 'Sobel' || step.algorithm === 'Scharr' ? 'block' : 'none'}">
-                    <div class="control-group" style="margin-bottom: 12px;">
-                        <span class="control-label">Derivative X Order (dx)</span>
-                        <div class="select-wrapper">
-                            <select class="custom-select" data-param="dx">
-                                <option value="0" ${step.dx === 0 ? 'selected' : ''}>0 (None)</option>
-                                <option value="1" ${step.dx === 1 ? 'selected' : ''}>1st Derivative</option>
-                                <option value="2" ${step.dx === 2 && step.algorithm === 'Sobel' ? 'selected' : ''} style="display: ${step.algorithm === 'Sobel' ? 'block' : 'none'}">2nd Derivative</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="control-group" style="margin-bottom: 0;">
-                        <span class="control-label">Derivative Y Order (dy)</span>
-                        <div class="select-wrapper">
-                            <select class="custom-select" data-param="dy">
-                                <option value="0" ${step.dy === 0 ? 'selected' : ''}>0 (None)</option>
-                                <option value="1" ${step.dy === 1 ? 'selected' : ''}>1st Derivative</option>
-                                <option value="2" ${step.dy === 2 && step.algorithm === 'Sobel' ? 'selected' : ''} style="display: ${step.algorithm === 'Sobel' ? 'block' : 'none'}">2nd Derivative</option>
-                            </select>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Sobel & Laplacian Kernel Sizes -->
-                <div class="control-group" id="grp-edges-ksize-${step.id}" style="display: ${step.algorithm === 'Sobel' || step.algorithm === 'Laplacian' ? 'block' : 'none'}">
-                    <span class="control-label">Sobel/Laplacian Kernel Size</span>
-                    <div class="select-wrapper">
-                        <select class="custom-select" data-param="ksize">
-                            <option value="1" ${step.ksize === 1 ? 'selected' : ''}>1 × 1</option>
-                            <option value="3" ${step.ksize === 3 ? 'selected' : ''}>3 × 3</option>
-                            <option value="5" ${step.ksize === 5 ? 'selected' : ''}>5 × 5</option>
-                            <option value="7" ${step.ksize === 7 ? 'selected' : ''}>7 × 7</option>
-                        </select>
-                    </div>
-                </div>
-                
-                <!-- Scale and Delta (Sobel, Scharr, Laplacian) -->
-                <div class="control-group" id="grp-edges-scale-${step.id}" style="display: ${step.algorithm !== 'Canny' ? 'block' : 'none'}">
-                    <div class="control-group" style="margin-bottom: 12px;">
-                        <div class="slider-header">
-                            <span class="control-label">Scale Factor</span>
-                            <span class="slider-value" id="val-edges-scale-${step.id}">${step.scale.toFixed(1)}</span>
-                        </div>
-                        <input type="range" class="custom-range" data-param="scale" min="0.1" max="5.0" step="0.1" value="${step.scale}">
-                    </div>
-                    <div class="control-group" style="margin-bottom: 0;">
-                        <div class="slider-header">
-                            <span class="control-label">Delta Offset</span>
-                            <span class="slider-value" id="val-edges-delta-${step.id}">${step.delta >= 0 ? '+' + step.delta : step.delta}</span>
-                        </div>
-                        <input type="range" class="custom-range" data-param="delta" min="-100" max="100" step="5" value="${step.delta}">
-                    </div>
-                </div>
-            </div>
-            
-            <div>
-                <span class="control-label" style="text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; opacity: 0.6; display: block; margin-bottom: 8px;">Step B: Area Contour Filling</span>
-                
-                <div class="control-group">
-                    <span class="control-label">Fill Target Canvas</span>
-                    <div class="select-wrapper">
-                        <select class="custom-select" data-param="fill_target">
-                            <option value="Original Image" ${step.fill_target === 'Original Image' ? 'selected' : ''}>Original Image</option>
-                            <option value="Binary Mask (Black background)" ${step.fill_target === 'Binary Mask (Black background)' ? 'selected' : ''}>Binary Mask (Black background)</option>
-                            <option value="Binary Mask (White background)" ${step.fill_target === 'Binary Mask (White background)' ? 'selected' : ''}>Binary Mask (White background)</option>
-                        </select>
-                    </div>
-                </div>
-                
-                <div class="control-group">
-                    <span class="control-label">Draw Style</span>
-                    <div class="select-wrapper">
-                        <select class="custom-select" data-param="draw_style">
-                            <option value="Filled Contours" ${step.draw_style === 'Filled Contours' ? 'selected' : ''}>Filled Contours</option>
-                            <option value="Contour Outlines" ${step.draw_style === 'Contour Outlines' ? 'selected' : ''}>Contour Outlines</option>
-                            <option value="Filled Bounding Boxes" ${step.draw_style === 'Filled Bounding Boxes' ? 'selected' : ''}>Filled Bounding Boxes</option>
-                            <option value="Bounding Box Outlines" ${step.draw_style === 'Bounding Box Outlines' ? 'selected' : ''}>Bounding Box Outlines</option>
-                        </select>
-                    </div>
-                </div>
-                
-                <div class="control-group" id="grp-fill-thickness-${step.id}" style="display: ${step.draw_style === 'Contour Outlines' || step.draw_style === 'Bounding Box Outlines' ? 'block' : 'none'}">
-                    <div class="slider-header">
-                        <span class="control-label">Line Thickness</span>
-                        <span class="slider-value" id="val-fill-thickness-${step.id}">${step.thickness}px</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="thickness" min="1" max="15" step="1" value="${step.thickness}">
-                </div>
-                
-                <div class="control-group">
-                    <div class="slider-header">
-                        <span class="control-label">Fill Color Grayscale</span>
-                        <span class="slider-value" id="val-fill-color-${step.id}">${step.color}</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="color" min="0" max="255" step="1" value="${step.color}">
-                </div>
-                
-                <div class="control-group" style="margin-bottom: 12px;">
-                    <div class="slider-header">
-                        <span class="control-label">Min Area Size</span>
-                        <span class="slider-value" id="val-fill-minarea-${step.id}">${step.min_area}px</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="min_area" min="0" max="2000" step="1" value="${step.min_area}">
-                </div>
-                
-                <div class="control-group" style="margin-bottom: 0;">
-                    <div class="slider-header">
-                        <span class="control-label">Max Area Size</span>
-                        <span class="slider-value" id="val-fill-maxarea-${step.id}">${step.max_area}px</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="max_area" min="0" max="50000" step="1" value="${step.max_area}">
-                </div>
-            </div>
-        `;
-    } else if (step.type === 'upsample') {
-        bodyHtml = `
-            <div class="control-group">
-                <div class="slider-header">
-                    <span class="control-label">Scale Multiplier</span>
-                    <span class="slider-value" id="val-upsample-scale-${step.id}">${step.scale.toFixed(1)}x</span>
-                </div>
-                <input type="range" class="custom-range" data-param="scale" min="1.0" max="4.0" step="0.5" value="${step.scale}">
-            </div>
-            <div class="control-group">
-                <span class="control-label">Interpolation</span>
-                <div class="select-wrapper">
-                    <select class="custom-select" data-param="interpolation">
-                        <option value="Bilinear (Fast)" ${step.interpolation === 'Bilinear (Fast)' ? 'selected' : ''}>Bilinear (Fast)</option>
-                        <option value="Bicubic (Sharp)" ${step.interpolation === 'Bicubic (Sharp)' ? 'selected' : ''}>Bicubic (Sharp)</option>
-                        <option value="Lanczos (Ultra Sharp)" ${step.interpolation === 'Lanczos (Ultra Sharp)' ? 'selected' : ''}>Lanczos (Ultra Sharp)</option>
-                        <option value="Nearest Neighbor" ${step.interpolation === 'Nearest Neighbor' ? 'selected' : ''}>Nearest Neighbor</option>
-                    </select>
-                </div>
-            </div>
-        `;
-    } else if (step.type === 'downsample') {
-        bodyHtml = `
-            <div class="control-group">
-                <div class="slider-header">
-                    <span class="control-label">Scale Multiplier</span>
-                    <span class="slider-value" id="val-downsample-scale-${step.id}">${step.scale.toFixed(2)}x</span>
-                </div>
-                <input type="range" class="custom-range" data-param="scale" min="0.1" max="1.0" step="0.05" value="${step.scale}">
-            </div>
-            <div class="control-group">
-                <span class="control-label">Interpolation</span>
-                <div class="select-wrapper">
-                    <select class="custom-select" data-param="interpolation">
-                        <option value="Bilinear (Fast)" ${step.interpolation === 'Bilinear (Fast)' ? 'selected' : ''}>Bilinear (Fast)</option>
-                        <option value="Bicubic (Sharp)" ${step.interpolation === 'Bicubic (Sharp)' ? 'selected' : ''}>Bicubic (Sharp)</option>
-                        <option value="Lanczos (Ultra Sharp)" ${step.interpolation === 'Lanczos (Ultra Sharp)' ? 'selected' : ''}>Lanczos (Ultra Sharp)</option>
-                        <option value="Nearest Neighbor" ${step.interpolation === 'Nearest Neighbor' ? 'selected' : ''}>Nearest Neighbor</option>
-                    </select>
-                </div>
-            </div>
-        `;
-    } else if (step.type === 'crop') {
-        bodyHtml = `
-            <div class="control-group">
-                <div class="slider-header">
-                    <span class="control-label">Left Crop</span>
-                    <span class="slider-value" id="val-crop-left-${step.id}">${step.left}%</span>
-                </div>
-                <input type="range" class="custom-range" data-param="left" min="0" max="90" step="1" value="${step.left}">
-            </div>
-            <div class="control-group">
-                <div class="slider-header">
-                    <span class="control-label">Right Crop</span>
-                    <span class="slider-value" id="val-crop-right-${step.id}">${step.right}%</span>
-                </div>
-                <input type="range" class="custom-range" data-param="right" min="0" max="90" step="1" value="${step.right}">
-            </div>
-            <div class="control-group">
-                <div class="slider-header">
-                    <span class="control-label">Top Crop</span>
-                    <span class="slider-value" id="val-crop-top-${step.id}">${step.top}%</span>
-                </div>
-                <input type="range" class="custom-range" data-param="top" min="0" max="90" step="1" value="${step.top}">
-            </div>
-            <div class="control-group">
-                <div class="slider-header">
-                    <span class="control-label">Bottom Crop</span>
-                    <span class="slider-value" id="val-crop-bottom-${step.id}">${step.bottom}%</span>
-                </div>
-                <input type="range" class="custom-range" data-param="bottom" min="0" max="90" step="1" value="${step.bottom}">
-            </div>
-        `;
-    } else if (step.type === 'heal') {
-        const isSkeletonization = step.operation === 'Skeletonization (Thinning)';
-        
-        bodyHtml = `
-            <div class="control-group">
-                <span class="control-label">Operation</span>
-                <div class="select-wrapper">
-                    <select class="custom-select" data-param="operation">
-                        <option value="Heal Gaps in White (Closing)" ${step.operation === 'Heal Gaps in White (Closing)' ? 'selected' : ''}>Heal Gaps in White (Closing)</option>
-                        <option value="Heal Gaps in Black (Opening)" ${step.operation === 'Heal Gaps in Black (Opening)' ? 'selected' : ''}>Heal Gaps in Black (Opening)</option>
-                        <option value="Dilate (Thicken White)" ${step.operation === 'Dilate (Thicken White)' ? 'selected' : ''}>Dilate (Thicken White)</option>
-                        <option value="Erode (Thicken Black)" ${step.operation === 'Erode (Thicken Black)' ? 'selected' : ''}>Erode (Thicken Black)</option>
-                        <option value="Stroke Outlines (Gradient)" ${step.operation === 'Stroke Outlines (Gradient)' ? 'selected' : ''}>Stroke Outlines (Gradient)</option>
-                        <option value="Extract Bright Details (Top Hat)" ${step.operation === 'Extract Bright Details (Top Hat)' ? 'selected' : ''}>Extract Bright Details (Top Hat)</option>
-                        <option value="Extract Dark Details (Black Hat)" ${step.operation === 'Extract Dark Details (Black Hat)' ? 'selected' : ''}>Extract Dark Details (Black Hat)</option>
-                        <option value="Skeletonization (Thinning)" ${step.operation === 'Skeletonization (Thinning)' ? 'selected' : ''}>Skeletonization (Thinning)</option>
-                    </select>
-                </div>
-            </div>
-            
-            <div class="control-group">
-                <span class="control-label">Channel Mode</span>
-                <div class="select-wrapper">
-                    <select class="custom-select" data-param="channel_mode">
-                        <option value="Color Channels" ${step.channel_mode === 'Color Channels' ? 'selected' : ''}>Color Channels</option>
-                        <option value="Grayscale" ${step.channel_mode === 'Grayscale' ? 'selected' : ''}>Grayscale Mode</option>
-                    </select>
-                </div>
-            </div>
-            
-            <div class="control-group">
-                <div class="toggle-container">
-                    <span class="control-label" style="font-size: 0.85rem; opacity: 0.9;">Filter by Target Color</span>
-                    <label class="switch">
-                        <input type="checkbox" data-param="use_target_color" ${step.use_target_color ? 'checked' : ''}>
-                        <span class="slider-switch"></span>
-                    </label>
-                </div>
-            </div>
-            
-            ${step.use_target_color ? `
-            <div class="control-group" style="border-top: 1px dashed rgba(255,255,255,0.06); padding-top: 12px; margin-top: 4px;">
-                <span class="control-label">Match Target Color</span>
-                <input type="color" class="custom-color-picker" data-param="target_color" value="${step.target_color || '#ff0000'}" style="width: 100%; height: 36px; border: none; border-radius: 6px; cursor: pointer; background: transparent; padding: 0;">
-            </div>
-            
-            <div class="control-group">
-                <div class="slider-header">
-                    <span class="control-label">Match Tolerance</span>
-                    <span class="slider-value" id="val-heal-tolerance-${step.id}">${step.tolerance !== undefined ? step.tolerance : 30}</span>
-                </div>
-                <input type="range" class="custom-range" data-param="tolerance" min="0" max="255" step="1" value="${step.tolerance !== undefined ? step.tolerance : 30}">
-            </div>
-            
-            <div class="control-group">
-                <span class="control-label">Stroke Output Color</span>
-                <input type="color" class="custom-color-picker" data-param="fill_color" value="${step.fill_color || '#000000'}" style="width: 100%; height: 36px; border: none; border-radius: 6px; cursor: pointer; background: transparent; padding: 0;">
-            </div>
-            
-            <div class="control-group" style="margin-bottom: 8px;">
-                <span class="control-label">Background Erase Color</span>
-                <input type="color" class="custom-color-picker" data-param="bg_color" value="${step.bg_color || '#ffffff'}" style="width: 100%; height: 36px; border: none; border-radius: 6px; cursor: pointer; background: transparent; padding: 0;">
-            </div>
-            ` : ''}
-            
-            ${isSkeletonization ? `
-            <div class="control-group" style="border-top: 1px dashed rgba(255,255,255,0.06); padding-top: 12px; margin-top: 4px;">
-                <span class="control-label">Foreground Mode</span>
-                <div class="select-wrapper">
-                    <select class="custom-select" data-param="foreground_mode">
-                        <option value="Black strokes (Light background)" ${step.foreground_mode === 'Black strokes (Light background)' ? 'selected' : ''}>Black strokes (Light background)</option>
-                        <option value="White strokes (Dark background)" ${step.foreground_mode === 'White strokes (Dark background)' ? 'selected' : ''}>White strokes (Dark background)</option>
-                    </select>
-                </div>
-            </div>
-            
-            <div class="control-group">
-                <div class="slider-header">
-                    <span class="control-label">Binarization Threshold</span>
-                    <span class="slider-value" id="val-heal-threshold-${step.id}">${step.skel_threshold !== undefined ? step.skel_threshold : 127}</span>
-                </div>
-                <input type="range" class="custom-range" data-param="skel_threshold" min="0" max="255" step="1" value="${step.skel_threshold !== undefined ? step.skel_threshold : 127}">
-            </div>
-            ` : `
-            <div class="control-group" style="border-top: 1px dashed rgba(255,255,255,0.06); padding-top: 12px; margin-top: 4px;">
-                <span class="control-label">Kernel Shape</span>
-                <div class="select-wrapper">
-                    <select class="custom-select" data-param="shape">
-                        <option value="Rectangle" ${step.shape === 'Rectangle' ? 'selected' : ''}>Rectangle</option>
-                        <option value="Ellipse" ${step.shape === 'Ellipse' ? 'selected' : ''}>Ellipse</option>
-                        <option value="Cross" ${step.shape === 'Cross' ? 'selected' : ''}>Cross</option>
-                    </select>
-                </div>
-            </div>
-            <div class="control-group">
-                <div class="slider-header">
-                    <span class="control-label">Kernel Width (X)</span>
-                    <span class="slider-value" id="val-heal-kernel-x-${step.id}">${step.kernel_x}px</span>
-                </div>
-                <input type="range" class="custom-range" data-param="kernel_x" min="1" max="25" step="2" value="${step.kernel_x}">
-            </div>
-            <div class="control-group">
-                <div class="slider-header">
-                    <span class="control-label">Kernel Height (Y)</span>
-                    <span class="slider-value" id="val-heal-kernel-y-${step.id}">${step.kernel_y}px</span>
-                </div>
-                <input type="range" class="custom-range" data-param="kernel_y" min="1" max="25" step="2" value="${step.kernel_y}">
-            </div>
-            <div class="control-group">
-                <div class="slider-header">
-                    <span class="control-label">Iterations</span>
-                    <span class="slider-value" id="val-heal-iterations-${step.id}">${step.iterations}</span>
-                </div>
-                <input type="range" class="custom-range" data-param="iterations" min="1" max="5" step="1" value="${step.iterations}">
-            </div>
-            `}
-        `;
-    } else if (step.type === 'fill') {
-        const isHoleFilling = step.fill_mode === 'Hole Filling (Contours)';
-        const isChromaKey = step.fill_mode === 'Color Replacement (Chroma Key)';
-        const isInpainting = step.fill_mode === 'Content-Aware Inpainting (NS)' || step.fill_mode === 'Content-Aware Inpainting (Telea)';
-        const isFloodFill = step.fill_mode === 'Flood Fill';
-        const isCornerFill = step.fill_mode === 'Corner Background Fill';
-        
-        const hasFillColor = !isInpainting;
-        const hasTargetColor = isChromaKey || isInpainting || (isHoleFilling && step.use_target_color);
-        const hasInpaintRadius = isInpainting;
-        const hasFloodTolerances = isFloodFill || isCornerFill;
-        
-        bodyHtml = `
-            <div class="control-group">
-                <span class="control-label">Fill Mode</span>
-                <div class="select-wrapper">
-                    <select class="custom-select" data-param="fill_mode">
-                        <option value="Hole Filling (Contours)" ${step.fill_mode === 'Hole Filling (Contours)' ? 'selected' : ''}>Hole Filling (Contours)</option>
-                        <option value="Color Replacement (Chroma Key)" ${step.fill_mode === 'Color Replacement (Chroma Key)' ? 'selected' : ''}>Color Replacement (Chroma Key)</option>
-                        <option value="Content-Aware Inpainting (NS)" ${step.fill_mode === 'Content-Aware Inpainting (NS)' ? 'selected' : ''}>Content-Aware Inpainting (NS)</option>
-                        <option value="Content-Aware Inpainting (Telea)" ${step.fill_mode === 'Content-Aware Inpainting (Telea)' ? 'selected' : ''}>Content-Aware Inpainting (Telea)</option>
-                        <option value="Flood Fill" ${step.fill_mode === 'Flood Fill' ? 'selected' : ''}>Flood Fill</option>
-                        <option value="Corner Background Fill" ${step.fill_mode === 'Corner Background Fill' ? 'selected' : ''}>Corner Background Fill</option>
-                    </select>
-                </div>
-            </div>
-            
-            ${hasFillColor ? `
-            <div class="control-group">
-                <span class="control-label">Target Fill Color</span>
-                <input type="color" class="custom-color-picker" data-param="fill_color" value="${step.fill_color || '#ffffff'}" style="width: 100%; height: 36px; border: none; border-radius: 6px; cursor: pointer; background: transparent; padding: 0;">
-            </div>
-            ` : ''}
-            
-            ${isHoleFilling ? `
-            <div class="control-group">
-                <div class="toggle-container">
-                    <span class="control-label" style="font-size: 0.85rem; opacity: 0.9;">Filter by Target Color</span>
-                    <label class="switch">
-                        <input type="checkbox" data-param="use_target_color" ${step.use_target_color ? 'checked' : ''}>
-                        <span class="slider-switch"></span>
-                    </label>
-                </div>
-            </div>
-            ` : ''}
-            
-            ${hasTargetColor ? `
-            <div class="control-group" style="border-top: 1px dashed rgba(255,255,255,0.06); padding-top: 12px; margin-top: 4px;">
-                <span class="control-label">Match Target Color</span>
-                <input type="color" class="custom-color-picker" data-param="target_color" value="${step.target_color || '#000000'}" style="width: 100%; height: 36px; border: none; border-radius: 6px; cursor: pointer; background: transparent; padding: 0;">
-            </div>
-            
-            <div class="control-group">
-                <div class="slider-header">
-                    <span class="control-label">Match Tolerance</span>
-                    <span class="slider-value" id="val-fill-tolerance-${step.id}">${step.tolerance !== undefined ? step.tolerance : 30}</span>
-                </div>
-                <input type="range" class="custom-range" data-param="tolerance" min="0" max="255" step="1" value="${step.tolerance !== undefined ? step.tolerance : 30}">
-            </div>
-            
-            <div class="control-group" style="margin-bottom: 8px;">
-                <span class="control-label">Channel Mode</span>
-                <div class="select-wrapper">
-                    <select class="custom-select" data-param="channel_mode">
-                        <option value="Color Channels" ${step.channel_mode === 'Color Channels' ? 'selected' : ''}>Color Channels</option>
-                        <option value="Grayscale" ${step.channel_mode === 'Grayscale' ? 'selected' : ''}>Grayscale Mode</option>
-                    </select>
-                </div>
-            </div>
-            ` : ''}
-            
-            ${isHoleFilling ? `
-            <div class="control-group" style="border-top: 1px dashed rgba(255,255,255,0.06); padding-top: 12px; margin-top: 4px;">
-                <div class="control-group" style="margin-bottom: 12px;">
-                    <div class="slider-header">
-                        <span class="control-label">Min Contour Area</span>
-                        <span class="slider-value" id="val-fill-minarea-${step.id}">${step.min_area}px</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="min_area" min="0" max="2000" step="1" value="${step.min_area}">
-                </div>
-                <div class="control-group" style="margin-bottom: 0;">
-                    <div class="slider-header">
-                        <span class="control-label">Max Contour Area</span>
-                        <span class="slider-value" id="val-fill-maxarea-${step.id}">${step.max_area}px</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="max_area" min="0" max="50000" step="1" value="${step.max_area}">
-                </div>
-            </div>
-            ` : ''}
-            
-            ${hasInpaintRadius ? `
-            <div class="control-group">
-                <div class="slider-header">
-                    <span class="control-label">Inpaint Neighborhood Radius</span>
-                    <span class="slider-value" id="val-fill-inpaint-radius-${step.id}">${step.inpaint_radius || 3}px</span>
-                </div>
-                <input type="range" class="custom-range" data-param="inpaint_radius" min="1" max="50" step="1" value="${step.inpaint_radius || 3}">
-            </div>
-            ` : ''}
-            
-            ${isFloodFill ? `
-            <div class="control-group" style="border-top: 1px dashed rgba(255,255,255,0.06); padding-top: 12px; margin-top: 4px;">
-                <div class="control-group" style="margin-bottom: 12px;">
-                    <div class="slider-header">
-                        <span class="control-label">Seed X Coord (%)</span>
-                        <span class="slider-value" id="val-fill-seedx-${step.id}">${step.seed_x}%</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="seed_x" min="0" max="100" step="1" value="${step.seed_x}">
-                </div>
-                <div class="control-group" style="margin-bottom: 0;">
-                    <div class="slider-header">
-                        <span class="control-label">Seed Y Coord (%)</span>
-                        <span class="slider-value" id="val-fill-seedy-${step.id}">${step.seed_y}%</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="seed_y" min="0" max="100" step="1" value="${step.seed_y}">
-                </div>
-            </div>
-            ` : ''}
-            
-            ${hasFloodTolerances ? `
-            <div class="control-group" style="border-top: 1px dashed rgba(255,255,255,0.06); padding-top: 12px; margin-top: 4px;">
-                <div class="control-group" style="margin-bottom: 12px;">
-                    <div class="slider-header">
-                        <span class="control-label">Lower Bound Tolerance</span>
-                        <span class="slider-value" id="val-fill-lodiff-${step.id}">${step.lo_diff}</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="lo_diff" min="0" max="255" step="1" value="${step.lo_diff}">
-                </div>
-                <div class="control-group" style="margin-bottom: 0;">
-                    <div class="slider-header">
-                        <span class="control-label">Upper Bound Tolerance</span>
-                        <span class="slider-value" id="val-fill-updiff-${step.id}">${step.up_diff}</span>
-                    </div>
-                    <input type="range" class="custom-range" data-param="up_diff" min="0" max="255" step="1" value="${step.up_diff}">
-                </div>
-            </div>
-            ` : ''}
-        `;
-    }
     
     const isDisabled = step.disabled === true;
     const isBaseline = state.comparisonBaseline === step.id;
-
     const strength = step.strength !== undefined ? step.strength : 100;
-
+    
+    const bodyHtml = renderStepParams(step, index);
+    
     card.innerHTML = `
         <div class="pipeline-card-header">
             <div class="pipeline-card-title">
+                <button class="action-btn btn-collapse" title="${step.collapsed ? 'Expand Step' : 'Collapse Step'}">
+                    ${step.collapsed ? 
+                      `<svg class="icon collapse-icon" viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>` : 
+                      `<svg class="icon collapse-icon" viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>`
+                    }
+                </button>
                 <span class="step-num">#${index + 1}</span>
-                <span class="step-name">${getStepName(step.type)}</span>
-                ${isBaseline ? '<span class="tag" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); font-size: 10px; margin-left: 8px; font-weight: bold; line-height: 1; padding: 2px 6px; border-radius: 4px;">Baseline</span>' : ''}
+                <span class="step-name">${escapeHTML(getStepName(step.type))}</span>
+                ${isBaseline ? '<span class="baseline-badge">Baseline</span>' : ''}
             </div>
             <div class="pipeline-card-actions">
-                <button class="action-btn btn-toggle-enable" title="${isDisabled ? 'Enable Step' : 'Disable Step'}">${isDisabled ? '🚫' : '👁️'}</button>
-                <button class="action-btn btn-set-baseline ${isBaseline ? 'active' : ''}" title="Set as Comparison Baseline">⚖️</button>
-                <button class="action-btn btn-up" title="Move Up" ${index === 0 ? 'disabled' : ''}>▲</button>
-                <button class="action-btn btn-down" title="Move Down" ${index === layerSteps.length - 1 ? 'disabled' : ''}>▼</button>
-                <button class="action-btn btn-delete" title="Remove">✕</button>
+                <button class="action-btn btn-toggle-enable" title="${isDisabled ? 'Enable Step' : 'Disable Step'}">
+                    ${isDisabled ? 
+                      `<svg class="icon" viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></svg>` : 
+                      `<svg class="icon" viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`
+                    }
+                </button>
+                <button class="action-btn btn-set-baseline ${isBaseline ? 'active' : ''}" title="Set as Comparison Baseline">
+                    <svg class="icon" viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+                </button>
+                <button class="action-btn btn-up" title="Move Up" ${index === 0 ? 'disabled' : ''}>
+                    <svg class="icon" viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>
+                </button>
+                <button class="action-btn btn-down" title="Move Down" ${index === state.pipeline.length - 1 ? 'disabled' : ''}>
+                    <svg class="icon" viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
+                <button class="action-btn btn-delete" title="Remove">
+                    <svg class="icon" viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
             </div>
         </div>
         <div class="pipeline-card-body">
             ${bodyHtml}
             
             <!-- Universal Step Opacity Blend Slider -->
-            <div class="control-group step-strength-wrapper" style="margin-top: 14px; border-top: 1px dashed rgba(255,255,255,0.06); padding-top: 12px;">
+            <div class="control-group step-strength-wrapper">
                 <div class="slider-header">
-                    <span class="control-label" style="opacity: 0.7; font-size: 11px;">Step Strength (Dry/Wet Blend)</span>
-                    <span class="slider-value" id="val-step-strength-${step.id}" style="opacity: 0.7; font-size: 11px;">${strength}%</span>
+                    <span class="control-label">Step Strength (Dry/Wet Blend)</span>
+                    <span class="slider-value" id="val-step-strength-${escapeHTML(step.id)}">${strength}%</span>
                 </div>
-                <input type="range" class="custom-range" data-param="step_strength" min="0" max="100" step="5" value="${strength}" style="height: 4px;">
+                <input type="range" class="custom-range strength-range" data-param="step_strength" min="0" max="100" step="5" value="${strength}">
             </div>
         </div>
     `;
@@ -1270,11 +326,11 @@ export function createPipelineCardElement(step, index, layerId) {
 }
 
 export function exportPreset() {
-    if (state.layers.length === 0) {
-        alert("Your Layers stack is currently empty. Add a layer before exporting a preset!");
+    if (state.pipeline.length === 0) {
+        alert("Your pipeline is currently empty. Add some steps before exporting a preset!");
         return;
     }
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state.layers, null, 2));
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state.pipeline, null, 2));
     const downloadAnchor = document.createElement('a');
     downloadAnchor.setAttribute("href", dataStr);
     downloadAnchor.setAttribute("download", "preprocessing_preset.json");
@@ -1289,29 +345,73 @@ export function importPreset(file, onLoadCallback) {
         try {
             const imported = JSON.parse(evt.target.result);
             if (Array.isArray(imported)) {
-                // Detect if layers format or legacy steps format
                 const isLayersPreset = imported.every(l => l.id && l.name && Array.isArray(l.steps));
                 const isLegacyStepsPreset = imported.every(step => step.id && step.type);
+                const isFlatPipelinePreset = imported.every(step => step.id && step.type && step.input_source);
                 
-                if (isLayersPreset) {
-                    state.layers = imported;
-                    renderLayers();
+                if (isFlatPipelinePreset || isLegacyStepsPreset) {
+                    // Import directly, map legacy type variables if needed
+                    state.pipeline = imported;
+                    renderPipeline();
                     if (onLoadCallback) onLoadCallback();
-                } else if (isLegacyStepsPreset) {
-                    // Fallback conversion for legacy presets
-                    const baseLayer = createDefaultLayer("Base Layer");
-                    baseLayer.steps = imported;
-                    state.layers = [baseLayer];
-                    renderLayers();
+                } else if (isLayersPreset) {
+                    // Convert old nested layers preset to the new flat pipeline format
+                    const flatPipeline = [];
+                    let precedingOutputId = "original";
+                    
+                    imported.forEach((layer, layerIdx) => {
+                        // Skip completely if layer is empty but has blending settings (Empty Layer Trap)
+                        if (!layer.steps || layer.steps.length === 0) return;
+                        
+                        let lastStepId = precedingOutputId;
+                        
+                        layer.steps.forEach((step, stepIdx) => {
+                            // Ensure step has unique ID mapping
+                            const stepId = step.id;
+                            const inputSource = (stepIdx === 0) ? precedingOutputId : layer.steps[stepIdx - 1].id;
+                            
+                            // Map step
+                            const newStep = {
+                                ...step,
+                                input_source: inputSource
+                            };
+                            flatPipeline.push(newStep);
+                            lastStepId = stepId;
+                        });
+                        
+                        // Check if layer requires blending settings (i.e. not normal, or has opacity < 100)
+                        const requiresBlending = layer.blend_mode !== "normal" || layer.opacity < 100 || layer.blend_interpolation !== "Bicubic (Sharp)";
+                        if (requiresBlending) {
+                            const blendStepId = 'step_blend_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+                            const blendStep = {
+                                id: blendStepId,
+                                type: "blend",
+                                disabled: layer.disabled,
+                                strength: 100,
+                                input_source: precedingOutputId, // target background
+                                blend_source: lastStepId,        // source foreground
+                                blend_mode: layer.blend_mode,
+                                opacity: layer.opacity,
+                                blend_interpolation: layer.blend_interpolation
+                            };
+                            flatPipeline.push(blendStep);
+                            precedingOutputId = blendStepId;
+                        } else {
+                            precedingOutputId = lastStepId;
+                        }
+                    });
+                    
+                    state.pipeline = flatPipeline;
+                    renderPipeline();
                     if (onLoadCallback) onLoadCallback();
                 } else {
-                    alert("Invalid preset file format. Must be a valid Layers stack or legacy pipeline.");
+                    alert("Invalid preset file format. Must be a valid pipeline preset or legacy layers JSON.");
                 }
             } else {
                 alert("Invalid preset file format. Preset must be a JSON array.");
             }
         } catch (err) {
-            alert("Failed to parse JSON file: " + err.message);
+            alert("Failed to parse JSON preset file: " + err.message);
         }
     };
     reader.readAsText(file);

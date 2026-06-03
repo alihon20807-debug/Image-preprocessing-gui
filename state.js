@@ -1,4 +1,5 @@
-// Centralized State Management
+// state.js
+// Centralized State Management for Schema-Driven Flat Pipeline
 
 export const state = {
     originalImage: new Image(),
@@ -17,34 +18,40 @@ export const state = {
     mouseWrapperX: 0, // Current mouse coords relative to wrapper
     mouseWrapperY: 0,
 
-    // Dynamic Layers builder state
-    layers: [], // Holds dynamic structured layers
-    comparisonBaseline: "original", // ID of step/layer for baseline comparison, or "original"
-    originalImageUploaded: false // Tracks if the original image has been cached on the backend
+    // Flat Pipeline builder state
+    pipeline: [], // Holds flat steps stack
+    schema: {}, // Stores OPERATIONS_SCHEMA fetched from backend
+    comparisonBaseline: "original", // ID of step for baseline comparison, or "original"
+    originalImageUploaded: false, // Tracks if the original image has been cached on the backend
+    sourceFileName: 'testimg.png', // Filename of active image source
+    currentMode: 'studio' // Current editor mode (studio or node)
 };
 
-export function createDefaultLayer(name = "New Layer") {
-    return {
-        id: 'layer_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
-        name: name,
+export function createDefaultStep(type, schema = null) {
+    const step = {
+        id: 'step_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+        type: type,
         disabled: false,
-        input_source: 'previous', // 'previous', 'original', or layerId
-        blend_mode: 'normal',
-        blend_target: 'previous',
-        blend_interpolation: 'Bicubic (Sharp)',
-        opacity: 100,
-        isExpanded: true,
-        steps: []
+        strength: 100,
+        input_source: 'previous'
     };
-}
 
-// Initialize with a default Base Layer
-state.layers = [ createDefaultLayer("Base Layer") ];
+    // Populate schema defaults
+    const activeSchema = schema || state.schema;
+    if (activeSchema && activeSchema[type] && activeSchema[type].params) {
+        for (const [paramName, paramDef] of Object.entries(activeSchema[type].params)) {
+            step[paramName] = paramDef.default;
+        }
+    }
+
+    return step;
+}
 
 // DOM elements cache/registry (resolved on module evaluation)
 export const elements = {
     originalCanvas: document.getElementById('original-canvas'),
     processedCanvas: document.getElementById('processed-canvas'),
+    processedWrapper: document.getElementById('processed-wrapper'),
     offscreenCanvas: document.createElement('canvas'), // GPU filter buffer
     canvasWrapper: document.getElementById('canvas-wrapper'),
     splitDivider: document.getElementById('split-divider'),
@@ -62,9 +69,9 @@ export const elements = {
     compSliderVal: document.getElementById('comp-slider-val'),
     compSliderGroup: document.getElementById('comp-slider-group'),
 
-    // Layers selector controls
-    addLayerBtn: document.getElementById('add-layer-btn'),
-    layersListContainer: document.getElementById('layers-list'),
+    // Pipeline controls
+    addLayerBtn: document.getElementById('add-layer-btn'), // Mapping button for adding steps
+    layersListContainer: document.getElementById('layers-list'), // Mapping container for step cards
 
     // Actions
     downloadBtn: document.getElementById('download-btn'),
