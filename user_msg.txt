@@ -1,0 +1,35 @@
+<USER_REQUEST>
+Are there any lingering bugs?
+Heres a few I found.
+
+Yes — there are several critical bugs from the incomplete removal. The nodes.js file is deleted but app.js still imports from it, which kills the entire app at module load time. Here's the full audit:
+Critical (app won't load)
+C1 — app.js:17-23: Import from deleted nodes.js
+import { setupNodeEditorTheme, registerCustomNodes, compileGraphToPipeline, ... } from './nodes.js';
+nodes.js is gone → ES module load fails → entire app.js never executes → app is dead on arrival.
+Critical (404s on page load)
+C2 — index.html:12-13: Links to deleted files
+<link rel="stylesheet" type="text/css" href="litegraph.css">
+<script type="text/javascript" src="litegraph.min.js"></script>
+Both files deleted. The 404s don't kill the page but will spam the console.
+High (would crash after fixing C1)
+C3 — app.js still has the node mode toggle button at lines 853-882 (btnNode.addEventListener('click', ...)) which calls initNodeGraph() → that function references LGraph, LGraphCanvas, setupNodeEditorTheme, registerCustomNodes, rebuildGraphFromPipeline — all gone.
+C4 — app.js:996-1011: processImage() has a state.currentMode === 'node' branch that calls compileGraphToPipeline() — deleted.
+C5 — app.js:1146-1152: Node preview update in processImage() result handler — references graph.findNodesByType.
+C6 — app.js:711-717: importPreset callback references state.currentMode === 'node', rebuildGraphFromPipeline, graph.
+C7 — app.js:1213-1268: maximizeEditor()/maximizeViewer()/restoreSplit() all reference isGraphInitialized and lCanvas — never initialized.
+C8 — app.js:733-741: Alt+M shortcut toggles btnNode.click() → crashes via C3.
+C9 — app.js:893-899: Layout toggle buttons reference deleted node canvases.
+Medium
+C10 — index.html:253-280: Node workspace panel still in the DOM (hidden). The <canvas id="node-canvas"> at line 278 is orphaned but harmless.
+C11 — index.html:293-294: "Node Flow" toggle button still rendered — user can click it and trigger C3.
+C12 — state.js removed currentMode field (good), but app.js:818 sets state.currentMode = 'studio' as a property-poke — minor style issue, works in JS.
+Recommendation
+All node UI code needs to be pruned from app.js — remove the entire import block from ./nodes.js, delete initNodeGraph(), delete the mode-switching block (lines 811-882), delete the node branches in processImage() and handleUploadedFile(), delete the layout-maximize functions (or strip their node references), and delete the Alt+M shortcut branch. Then clean index.html of the node panel HTML, the mode toggle buttons, and the deleted CSS/JS tags.
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-06-03T13:53:59+04:00.
+</ADDITIONAL_METADATA>
+<USER_SETTINGS_CHANGE>
+The user changed setting `Model Selection` from Gemini 3.5 Flash (Medium) to Gemini 3.1 Pro (High). No need to comment on this change if the user doesn't ask about it. If reporting what model you are, please use a human readable name instead of the exact string.
+</USER_SETTINGS_CHANGE>

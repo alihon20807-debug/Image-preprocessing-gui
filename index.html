@@ -9,8 +9,6 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" type="text/css" href="litegraph.css">
-    <script type="text/javascript" src="litegraph.min.js"></script>
     <script>
         function showVisualError(title, content) {
             let container = document.getElementById('debug-error-container');
@@ -250,35 +248,6 @@
             </div>
         </aside>
 
-        <!-- Node Canvas Workspace -->
-        <div class="node-workspace hidden" id="node-workspace-panel">
-            <div class="node-canvas-header">
-                <div class="node-header-title">
-                    <h3>🔌 Node Flow Editor</h3>
-                    <p>Double-click canvas to search • Right-click to add nodes • Drag to connect</p>
-                </div>
-                <div class="node-queue-panel">
-                    <label class="toggle-container" style="gap: 8px; margin-right: 12px; display: inline-flex; width: auto;">
-                        <span class="control-label" style="font-size: 11px;">Auto-Queue</span>
-                        <div class="switch">
-                            <input type="checkbox" id="node-auto-queue" checked>
-                            <span class="slider-switch"></span>
-                        </div>
-                    </label>
-                    <button id="btn-queue-graph" class="btn btn-primary" style="font-size: 11px; padding: 6px 12px; height: 32px; width: auto;">🚀 Queue Graph</button>
-                    
-                    <div class="layout-toggle-group" id="node-layout-toggles" style="display: inline-flex; background: rgba(22, 24, 31, 0.9); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 6px; padding: 2px; gap: 2px; margin-left: 12px;">
-                        <button id="btn-layout-split" class="layout-tab active" title="Side-by-Side Split">🌗 Split</button>
-                        <button id="btn-layout-max-editor" class="layout-tab" title="Maximize Node Canvas">🔲 Canvas</button>
-                        <button id="btn-layout-max-viewer" class="layout-tab" title="Maximize Image Viewer">🖼️ Image</button>
-                    </div>
-                </div>
-            </div>
-            <div class="node-canvas-body">
-                <canvas id="node-canvas"></canvas>
-            </div>
-        </div>
-
         <!-- Panel Resize Handle -->
         <div class="sidebar-resizer" id="sidebar-resizer" title="Drag to resize panels"></div>
 
@@ -288,11 +257,6 @@
                 <div class="header-titles">
                     <h2>Interactive Preprocessing Canvas</h2>
                     <p>Scroll to Zoom (centered on cursor) • Click and Drag to Pan • Hover to Inspect Pixels</p>
-                </div>
-                <div class="mode-toggle-group">
-                    <button id="btn-studio-mode" class="toggle-tab active">🎛️ Layer Studio</button>
-                    <button id="btn-node-mode" class="toggle-tab">🔌 Node Flow</button>
-                </div>
             </header>
 
             <!-- Overlapping View Area -->

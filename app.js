@@ -14,77 +14,8 @@ import {
     importPreset,
     updateStepCardParamVisibility
 } from './ui.js';
-import {
-    setupNodeEditorTheme,
-    registerCustomNodes,
-    compileGraphToPipeline,
-    loadDefaultGraph,
-    rebuildGraphFromPipeline
-} from './nodes.js';
 
-let isGraphInitialized = false;
-let graph = null;
-let lCanvas = null;
 let lastDrawnBaseline = null;
-
-function initNodeGraph() {
-    if (isGraphInitialized) {
-        if (lCanvas) {
-            requestAnimationFrame(() => {
-                requestAnimationFrame(() => {
-                    if (lCanvas) {
-                        lCanvas.resize();
-                        lCanvas.setDirty(true, true);
-                    }
-                });
-            });
-        }
-        return;
-    }
-    
-    setupNodeEditorTheme();
-    
-    graph = new LGraph();
-    lCanvas = new LGraphCanvas(document.getElementById("node-canvas"), graph);
-    
-    // Register custom nodes with a callback that auto-queues on widget changes/link connects
-    registerCustomNodes(() => {
-        const autoQueue = document.getElementById("node-auto-queue");
-        if (autoQueue && autoQueue.checked) {
-            triggerDebouncedProcess();
-        }
-    });
-    
-    // Custom hook for link connect/disconnect to trigger auto-queue
-    graph.onNodeConnectionChange = () => {
-        const autoQueue = document.getElementById("node-auto-queue");
-        if (autoQueue && autoQueue.checked) {
-            triggerDebouncedProcess();
-        }
-    };
-
-    rebuildGraphFromPipeline(state.pipeline, graph);
-    
-    // Start execution loops
-    graph.start();
-    
-    // Canvas resizing to prevent aspect scale snapping desyncs
-    window.addEventListener("resize", () => {
-        if (lCanvas) lCanvas.resize();
-    });
-    
-    // Initial canvas dimensions sync (deferred to allow DOM reflow)
-    requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-            if (lCanvas) {
-                lCanvas.resize();
-                lCanvas.setDirty(true, true);
-            }
-        });
-    });
-    
-    isGraphInitialized = true;
-}
 
 // ----------------- Initialization & Loading -----------------
 
@@ -473,20 +404,7 @@ function setupEventListeners() {
         }
     });
 
-    // Also support dropping files directly onto the Node Workspace panel
-    const nodeWorkspacePanel = document.getElementById('node-workspace-panel');
-    if (nodeWorkspacePanel) {
-        nodeWorkspacePanel.addEventListener('dragover', (e) => {
-            e.preventDefault();
-        });
-        nodeWorkspacePanel.addEventListener('drop', (e) => {
-            e.preventDefault();
-            if (e.dataTransfer.files.length > 0) {
-                handleUploadedFile(e.dataTransfer.files[0]);
-            }
-        });
-    }
-    
+
     // --- Dynamic flat step additions ---
     const addStepBtn = document.getElementById('add-step-btn');
     if (addStepBtn) {
@@ -710,9 +628,6 @@ function setupEventListeners() {
     importFile.addEventListener('change', (e) => {
         if (e.target.files.length === 0) return;
         importPreset(e.target.files[0], () => {
-            if (state.currentMode === 'node' && isGraphInitialized && graph) {
-                rebuildGraphFromPipeline(state.pipeline, graph);
-            }
             triggerDebouncedProcess();
         });
         importFile.value = '';
@@ -729,17 +644,7 @@ function setupEventListeners() {
         // Global Alt-prefixed Navigation Shortcuts
         if (e.altKey) {
             const key = e.key.toLowerCase();
-            if (key === 'm') {
-                e.preventDefault();
-                const btnStudio = document.getElementById('btn-studio-mode');
-                const btnNode = document.getElementById('btn-node-mode');
-                if (state.currentMode === 'studio') {
-                    if (btnNode) btnNode.click();
-                } else {
-                    if (btnStudio) btnStudio.click();
-                }
-                return;
-            } else if (key === 'e') {
+            if (key === 'e') {
                 e.preventDefault();
                 maximizeEditor();
                 return;
@@ -807,95 +712,8 @@ function setupEventListeners() {
         }
     });
 
-    // --- Mode Tab Switching (Layer Studio vs Node Flow) ---
-    const btnStudio = document.getElementById('btn-studio-mode');
-    const btnNode = document.getElementById('btn-node-mode');
-    const sidebarPanel = document.getElementById('sidebar-panel') || document.querySelector('.sidebar');
-    const nodePanel = document.getElementById('node-workspace-panel');
-    const appContainer = document.querySelector('.app-container');
 
-    state.currentMode = 'studio'; // default
 
-    if (btnStudio && btnNode && sidebarPanel && nodePanel && appContainer) {
-        btnStudio.addEventListener('click', () => {
-            if (state.currentMode === 'studio') return;
-            
-            // Sync the node graph state to the pipeline before switching modes
-            if (state.currentMode === 'node' && isGraphInitialized && graph) {
-                try {
-                    const compiled = compileGraphToPipeline(graph);
-                    state.pipeline = compiled.pipeline;
-                    state.comparisonBaseline = compiled.comparisonBaseline;
-                } catch (compileErr) {
-                    console.error("Failed to compile graph on mode switch:", compileErr);
-                }
-            }
-            
-            state.currentMode = 'studio';
-            btnNode.classList.remove('active');
-            btnStudio.classList.add('active');
-            
-            nodePanel.classList.add('hidden');
-            sidebarPanel.classList.remove('hidden');
-            appContainer.classList.remove('node-mode-active');
-            
-            renderPipeline();
-            
-            // Defer auto-fitting image to let DOM reflow complete
-            requestAnimationFrame(() => {
-                requestAnimationFrame(() => {
-                    autoFitImage();
-                });
-            });
-            triggerDebouncedProcess();
-        });
-
-        btnNode.addEventListener('click', () => {
-            if (state.currentMode === 'node') return;
-            state.currentMode = 'node';
-            btnStudio.classList.remove('active');
-            btnNode.classList.add('active');
-            
-            sidebarPanel.classList.add('hidden');
-            nodePanel.classList.remove('hidden');
-            appContainer.classList.add('node-mode-active');
-            
-            initNodeGraph();
-            
-            if (graph) {
-                rebuildGraphFromPipeline(state.pipeline, graph);
-            }
-            
-            // Defer auto-fitting and canvas resizing to let DOM reflow complete
-            requestAnimationFrame(() => {
-                requestAnimationFrame(() => {
-                    if (isGraphInitialized && lCanvas) {
-                        lCanvas.resize();
-                        lCanvas.setDirty(true, true);
-                    }
-                    autoFitImage();
-                });
-            });
-            triggerDebouncedProcess();
-        });
-    }
-
-    // --- Manual Queue Graph Action ---
-    const btnQueue = document.getElementById('btn-queue-graph');
-    if (btnQueue) {
-        btnQueue.addEventListener('click', () => {
-            processImage();
-        });
-    }
-
-    // --- Layout Maximization Toggles ---
-    const btnLayoutSplit = document.getElementById('btn-layout-split');
-    const btnLayoutMaxEditor = document.getElementById('btn-layout-max-editor');
-    const btnLayoutMaxViewer = document.getElementById('btn-layout-max-viewer');
-    
-    if (btnLayoutSplit) btnLayoutSplit.addEventListener('click', restoreSplit);
-    if (btnLayoutMaxEditor) btnLayoutMaxEditor.addEventListener('click', maximizeEditor);
-    if (btnLayoutMaxViewer) btnLayoutMaxViewer.addEventListener('click', maximizeViewer);
     
     // Initial pipeline stack rendering on load
     renderPipeline();
@@ -907,9 +725,6 @@ function setupEventListeners() {
 function handleUploadedFile(file) {
     if (file.name.endsWith('.json') || file.type === 'application/json') {
         importPreset(file, () => {
-            if (state.currentMode === 'node' && isGraphInitialized && graph) {
-                rebuildGraphFromPipeline(state.pipeline, graph);
-            }
             triggerDebouncedProcess();
         });
     } else {
@@ -992,22 +807,6 @@ function processImage() {
     let pipelineToSend = state.pipeline;
     let baselineToSend = state.comparisonBaseline;
     
-    if (state.currentMode === 'node' && isGraphInitialized && graph) {
-        try {
-            const compiled = compileGraphToPipeline(graph);
-            pipelineToSend = compiled.pipeline;
-            baselineToSend = compiled.comparisonBaseline;
-            
-            // Sync compiled graph state back to the main pipeline state
-            state.pipeline = compiled.pipeline;
-            state.comparisonBaseline = compiled.comparisonBaseline;
-        } catch (compileErr) {
-            console.error(compileErr);
-            showPipelineErrorOverlay("GraphCompileError", compileErr.message, compileErr.stack);
-            isProcessing = false;
-            return;
-        }
-    }
 
     // Resolve "previous" references to absolute step IDs before sending payload
     const clonedPipeline = JSON.parse(JSON.stringify(pipelineToSend));
@@ -1141,14 +940,7 @@ function processImage() {
                 
                 // Refresh transform scales to keep layout stacked perfectly
                 updateCanvasesTransform();
- 
-                // If in Node mode, update the LiteGraph preview nodes with the newly processed image
-                if (state.currentMode === 'node' && isGraphInitialized && graph) {
-                    const previews = graph.findNodesByType("image/preview");
-                    previews.forEach(pNode => {
-                        pNode.updatePreview(result.processed_image);
-                    });
-                }
+
             });
         } else {
             console.error("Error from backend:", result.error || "Missing image data in response");
@@ -1196,33 +988,17 @@ function downloadProcessedImage() {
 
 // ----------------- Layout Maximizing Actions -----------------
 
-function updateLayoutButtons(activeId) {
-    const toggles = document.getElementById('node-layout-toggles');
-    if (!toggles) return;
-    const buttons = toggles.querySelectorAll('.layout-tab');
-    buttons.forEach(btn => {
-        if (btn.id === activeId) {
-            btn.classList.add('active');
-        } else {
-            btn.classList.remove('active');
-        }
-    });
-}
+
 
 function maximizeEditor() {
     const appContainer = document.querySelector('.app-container');
     if (!appContainer) return;
     appContainer.classList.remove('max-viewer-active');
     appContainer.classList.add('max-editor-active');
-    updateLayoutButtons('btn-layout-max-editor');
     
-    // Resize nodes and views safely after layout reflow
+    // Resize views safely after layout reflow
     requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-            if (isGraphInitialized && lCanvas) {
-                lCanvas.resize();
-                lCanvas.setDirty(true, true);
-            }
             autoFitImage();
         });
     });
@@ -1233,15 +1009,10 @@ function maximizeViewer() {
     if (!appContainer) return;
     appContainer.classList.remove('max-editor-active');
     appContainer.classList.add('max-viewer-active');
-    updateLayoutButtons('btn-layout-max-viewer');
     
-    // Resize nodes and views safely after layout reflow
+    // Resize views safely after layout reflow
     requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-            if (isGraphInitialized && lCanvas) {
-                lCanvas.resize();
-                lCanvas.setDirty(true, true);
-            }
             autoFitImage();
         });
     });
@@ -1252,15 +1023,10 @@ function restoreSplit() {
     if (!appContainer) return;
     appContainer.classList.remove('max-editor-active');
     appContainer.classList.remove('max-viewer-active');
-    updateLayoutButtons('btn-layout-split');
     
-    // Resize nodes and views safely after layout reflow
+    // Resize views safely after layout reflow
     requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-            if (isGraphInitialized && lCanvas) {
-                lCanvas.resize();
-                lCanvas.setDirty(true, true);
-            }
             autoFitImage();
         });
     });
@@ -1310,10 +1076,6 @@ function setupSidebarResizer() {
         
         // Defer reflows to animation frames to avoid visual lag
         requestAnimationFrame(() => {
-            if (isGraphInitialized && lCanvas) {
-                lCanvas.resize();
-                lCanvas.setDirty(true, true);
-            }
             autoFitImage();
         });
     });
@@ -1328,10 +1090,6 @@ function setupSidebarResizer() {
         appContainer.style.setProperty('--sidebar-width', `${newWidth}px`);
         
         requestAnimationFrame(() => {
-            if (isGraphInitialized && lCanvas) {
-                lCanvas.resize();
-                lCanvas.setDirty(true, true);
-            }
             autoFitImage();
         });
     }, { passive: false });
