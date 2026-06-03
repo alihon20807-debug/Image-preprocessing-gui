@@ -5,19 +5,33 @@ import sys
 # ----------------- Core Assert Helpers & Validations -----------------
 
 def check_type(val, expected_type, name):
-    pass
+    if not isinstance(val, expected_type):
+        raise TypeError(f"Strict Type Violation: '{name}' must be {expected_type.__name__}. Got {type(val).__name__}")
 
 def check_one_of(val, allowed_set, name):
-    pass
+    if val not in allowed_set:
+        raise ValueError(f"Strict Value Violation: '{name}' must be one of {allowed_set}. Got {val!r}")
 
 def check_range(val, min_val, max_val, name):
-    pass
+    if not (min_val <= val <= max_val):
+        raise ValueError(f"Strict Range Violation: '{name}' must be in range [{min_val}, {max_val}]. Got {val}")
 
 def check_odd_positive(val, name, min_val=1):
-    pass
+    if not isinstance(val, int):
+        raise TypeError(f"Strict Type Violation: '{name}' must be int. Got {type(val).__name__}")
+    if val < min_val:
+        raise ValueError(f"Strict Range Violation: '{name}' must be >= {min_val}. Got {val}")
+    if val % 2 == 0:
+        raise ValueError(f"Strict Odd Violation: '{name}' must be odd. Got {val}")
 
 def verify_step_base(step):
-    pass
+    if not isinstance(step, dict):
+        raise TypeError(f"step must be a dict. Got {type(step).__name__}")
+    if 'id' not in step:
+        raise KeyError("step missing required key 'id'")
+    if 'type' not in step:
+        raise KeyError("step missing required key 'type'")
+
 
 # ----------------- OpenCV Modular Processing Functions -----------------
 
@@ -27,7 +41,7 @@ def apply_grayscale(img, step):
     verify_step_base(step)
     if len(img.shape) > 2:
         return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    return img
+    return img.copy()
 
 def apply_invert(img, step):
     if not isinstance(img, np.ndarray):
@@ -146,6 +160,15 @@ def apply_threshold_single(img, mode, val, fill_color, block_size, constant_c, s
     if not isinstance(img, np.ndarray):
         raise TypeError(f"img must be a numpy.ndarray. Got {type(img).__name__}")
     
+    h, w = img.shape[:2]
+    max_block = min(h, w)
+    if block_size > max_block:
+        block_size = max_block
+        if block_size % 2 == 0:
+            block_size -= 1
+        if block_size < 3:
+            block_size = 3
+
     check_type(mode, str, 'mode')
     check_type(val, int, 'val')
     check_range(val, 0, 255, 'val')
@@ -513,7 +536,7 @@ def apply_upsample(img, step):
     check_one_of(interp_name, set(interp_map.keys()), 'interpolation')
     
     if scale == 1.0:
-        return img
+        return img.copy()
         
     flags = interp_map[interp_name]
     
@@ -551,7 +574,7 @@ def apply_downsample(img, step):
     check_one_of(interp_name, set(interp_map.keys()), 'interpolation')
     
     if scale == 1.0:
-        return img
+        return img.copy()
         
     flags = interp_map[interp_name]
     
@@ -1265,6 +1288,15 @@ def apply_above_to_white(img, step):
         res = apply_thresh_condition(img, adjusted_val)
         
     elif algo == 'Adaptive Mean':
+        h, w = img.shape[:2]
+        if block_size_x > w:
+            block_size_x = w
+            if block_size_x % 2 == 0: block_size_x -= 1
+            if block_size_x < 3: block_size_x = 3
+        if block_size_y > h:
+            block_size_y = h
+            if block_size_y % 2 == 0: block_size_y -= 1
+            if block_size_y < 3: block_size_y = 3
         check_odd_positive(block_size_x, 'block_size_x', min_val=3)
         check_odd_positive(block_size_y, 'block_size_y', min_val=3)
         local_mean = cv2.boxFilter(img, -1, (block_size_x, block_size_y), borderType=cv2.BORDER_REPLICATE)
@@ -1272,6 +1304,15 @@ def apply_above_to_white(img, step):
         res = apply_thresh_condition(img, threshold_matrix)
         
     elif algo == 'Adaptive Gaussian':
+        h, w = img.shape[:2]
+        if block_size_x > w:
+            block_size_x = w
+            if block_size_x % 2 == 0: block_size_x -= 1
+            if block_size_x < 3: block_size_x = 3
+        if block_size_y > h:
+            block_size_y = h
+            if block_size_y % 2 == 0: block_size_y -= 1
+            if block_size_y < 3: block_size_y = 3
         check_odd_positive(block_size_x, 'block_size_x', min_val=3)
         check_odd_positive(block_size_y, 'block_size_y', min_val=3)
         if sigma_x < 0.0 or sigma_y < 0.0:
@@ -1286,12 +1327,12 @@ def apply_above_to_white(img, step):
     return res
 
 def apply_blend(img, step, cache_matrices=None):
-    blend_src_id = step.get('blend_source', 'original')
+    blend_src_id = step.get('blend_source', 'previous')
     
     if cache_matrices and blend_src_id in cache_matrices:
         blend_src_img = cache_matrices[blend_src_id]
     else:
-        blend_src_img = img
+        raise KeyError(f"Blend source ID '{blend_src_id}' not found in cached step matrices.")
         
     blend_mode = step.get('blend_mode', 'normal')
     opacity = step.get('opacity', 100.0)
@@ -1317,38 +1358,7 @@ PROCESSING_REGISTRY = {
     'blend': apply_blend
 }
 
-# ----------------- Layer Validation & Blending Helpers -----------------
-
-def verify_layer_base(layer):
-    if type(layer) is not dict:
-        raise TypeError(f"Layer must be a dict. Got {type(layer).__name__}")
-    
-    required_keys = {'id', 'name', 'input_source', 'blend_mode', 'blend_target', 'opacity', 'steps'}
-    for k in required_keys:
-        if k not in layer:
-            raise KeyError(f"Missing mandatory layer structural key: '{k}'")
-            
-    check_type(layer['id'], str, 'layer.id')
-    check_type(layer['name'], str, 'layer.name')
-    check_type(layer['input_source'], str, 'layer.input_source')
-    check_type(layer['blend_mode'], str, 'layer.blend_mode')
-    check_type(layer['blend_target'], str, 'layer.blend_target')
-    
-    if type(layer['opacity']) not in (int, float):
-        raise TypeError(f"Layer opacity must be int or float. Got {type(layer['opacity']).__name__}")
-    check_range(float(layer['opacity']), 0.0, 100.0, 'layer.opacity')
-    
-    if 'disabled' in layer:
-        check_type(layer['disabled'], bool, 'layer.disabled')
-        
-    if 'blend_interpolation' in layer:
-        check_type(layer['blend_interpolation'], str, 'layer.blend_interpolation')
-        
-    if type(layer['steps']) is not list:
-        raise TypeError(f"Layer steps must be a list. Got {type(layer['steps']).__name__}")
-        
-    supported_blend_modes = {'normal', 'add', 'subtract', 'multiply', 'screen', 'difference', 'darken', 'lighten'}
-    check_one_of(layer['blend_mode'], supported_blend_modes, 'layer.blend_mode')
+# ----------------- Blending Helpers -----------------
 
 def blend_images(target_img, src_img, blend_mode, opacity, blend_interp='Bicubic (Sharp)'):
     if not isinstance(target_img, np.ndarray):

@@ -116,13 +116,12 @@ def process():
         if type(pipeline) is not list:
             raise TypeError(f"Pipeline must be an array list. Got {type(pipeline).__name__}")
             
-        # Step 1 & 2: Validate DAG structure & parameters (returning 400 BadRequest on failure)
+        # Step 1 & 2: Validate parameters & DAG structure (returning 400 BadRequest on failure)
         from schema import verify_pipeline_dag, validate_step_params
         try:
-            verify_pipeline_dag(pipeline)
             for step in pipeline:
-                if not step.get('disabled', False):
-                    validate_step_params(step['type'], step)
+                validate_step_params(step['type'], step)
+            verify_pipeline_dag(pipeline)
         except (ValueError, TypeError, KeyError) as val_err:
             response = jsonify({
                 "error_type": "ValidationError",
@@ -173,6 +172,15 @@ def process():
             step_type = step['type']
             disabled = step.get('disabled', False)
             
+            # Resolve blend_source "previous" if it is a blend step (Bug #5)
+            if step_type == 'blend':
+                blend_src = step.get('blend_source', 'previous')
+                if blend_src == 'previous':
+                    blend_key = pipeline[idx - 1]['id'] if idx > 0 else "original"
+                else:
+                    blend_key = blend_src
+                step['blend_source'] = blend_key
+            
             if disabled:
                 # If disabled, its output is its resolved input
                 input_src = step.get('input_source', 'previous')
@@ -181,7 +189,10 @@ def process():
                 else:
                     input_key = input_src
                     
-                out_img = _pipeline_cache_matrices.get(input_key, img).copy()
+                if input_key not in _pipeline_cache_matrices:
+                    raise KeyError(f"Cache reference missing: '{input_key}' not found in cached step matrices.")
+                    
+                out_img = _pipeline_cache_matrices[input_key].copy()
                 _pipeline_cache_matrices[step_id] = out_img
                 continue
                 
@@ -215,7 +226,7 @@ def process():
                 out_img = process_func(input_img, step)
                 
             # 4. Universal dry/wet strength logic
-            if 'strength' in step:
+            if 'strength' in step and step_type != 'blend':
                 strength = float(step['strength']) / 100.0
                 if strength < 1.0:
                     if out_img.shape == input_img.shape:

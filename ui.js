@@ -4,8 +4,22 @@
 import { state, elements, createDefaultStep } from './state.js';
 import { updateComparisonView } from './viewer.js';
 
+export function escapeHTML(str) {
+    if (str === null || str === undefined) return '';
+    const StringClass = String(str);
+    return StringClass.replace(/[&<>'"]/g, 
+        tag => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            "'": '&#39;',
+            '"': '&quot;'
+        }[tag] || tag)
+    );
+}
+
 export function generateStepId() {
-    return 'step_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+    return 'step_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
 }
 
 export function getStepName(type) {
@@ -23,7 +37,7 @@ export function getStepCategory(type) {
         case 'heal':
             return 'cat-filter';
         case 'threshold':
-        case 'above_white':
+        case 'above_to_white':
         case 'edges':
         case 'edges_fill':
             return 'cat-threshold';
@@ -51,13 +65,16 @@ export function updateCompareReferenceDropdown() {
         const stepOpt = document.createElement('option');
         stepOpt.value = step.id;
         stepOpt.textContent = `Step #${idx + 1}: ${getStepName(step.type)}` + (step.disabled ? ' (Disabled)' : '');
+        if (step.disabled) {
+            stepOpt.disabled = true;
+        }
         elements.compareReferenceSelect.appendChild(stepOpt);
     });
     
-    // Verify if comparisonBaseline still exists, fallback if not
+    // Verify if comparisonBaseline still exists and is enabled, fallback if not
     let exists = selectedVal === "none" || selectedVal === "original";
     if (!exists) {
-        exists = state.pipeline.some(s => s.id === selectedVal);
+        exists = state.pipeline.some(s => s.id === selectedVal && !s.disabled);
     }
     
     if (!exists) {
@@ -97,6 +114,28 @@ export function renderPipeline() {
     }
 }
 
+export function updateStepCardParamVisibility(stepCard, step) {
+    const schema = state.schema[step.type];
+    if (!schema || !schema.params) return;
+    
+    for (const [paramName, paramDef] of Object.entries(schema.params)) {
+        if (!paramDef.visible_if) continue;
+        
+        let isVisible = true;
+        for (const [depName, allowedValues] of Object.entries(paramDef.visible_if)) {
+            if (!allowedValues.includes(step[depName])) {
+                isVisible = false;
+                break;
+            }
+        }
+        
+        const paramEl = stepCard.querySelector(`.param-group[data-param-name="${paramName}"]`);
+        if (paramEl) {
+            paramEl.style.display = isVisible ? 'block' : 'none';
+        }
+    }
+}
+
 function renderStepParams(step, index) {
     const schema = state.schema[step.type];
     if (!schema || !schema.params) return '';
@@ -110,7 +149,7 @@ function renderStepParams(step, index) {
     `;
     for (let i = 0; i < index; i++) {
         const prevStep = state.pipeline[i];
-        inputOptions += `<option value="${prevStep.id}" ${step.input_source === prevStep.id ? 'selected' : ''}>Step #${i + 1}: ${getStepName(prevStep.type)}</option>`;
+        inputOptions += `<option value="${escapeHTML(prevStep.id)}" ${step.input_source === prevStep.id ? 'selected' : ''} ${prevStep.disabled ? 'disabled' : ''}>Step #${i + 1}: ${escapeHTML(getStepName(prevStep.type))}${prevStep.disabled ? ' (Disabled)' : ''}</option>`;
     }
     
     html += `
@@ -134,11 +173,11 @@ function renderStepParams(step, index) {
             `;
             for (let i = 0; i < index; i++) {
                 const prevStep = state.pipeline[i];
-                blendOptions += `<option value="${prevStep.id}" ${step.blend_source === prevStep.id ? 'selected' : ''}>Step #${i + 1}: ${getStepName(prevStep.type)}</option>`;
+                blendOptions += `<option value="${escapeHTML(prevStep.id)}" ${step.blend_source === prevStep.id ? 'selected' : ''} ${prevStep.disabled ? 'disabled' : ''}>Step #${i + 1}: ${escapeHTML(getStepName(prevStep.type))}${prevStep.disabled ? ' (Disabled)' : ''}</option>`;
             }
             html += `
                 <div class="control-group">
-                    <span class="control-label">${paramDef.label}</span>
+                    <span class="control-label">${escapeHTML(paramDef.label)}</span>
                     <div class="select-wrapper">
                         <select class="custom-select" data-param="blend_source">
                             ${blendOptions}
@@ -162,44 +201,44 @@ function renderStepParams(step, index) {
         
         const displayStyle = isVisible ? 'block' : 'none';
         
-        html += `<div class="control-group param-group" data-param-name="${paramName}" style="display: ${displayStyle};">`;
+        html += `<div class="control-group param-group" data-param-name="${escapeHTML(paramName)}" style="display: ${displayStyle};">`;
         
         if (paramDef.type === 'int' || paramDef.type === 'float') {
             const valDisplay = (paramDef.type === 'float') ? step[paramName].toFixed(1) : (step[paramName] >= 0 && paramName === 'brightness' ? '+' + step[paramName] : step[paramName]);
             html += `
                 <div class="slider-header">
-                    <span class="control-label">${paramDef.label}</span>
-                    <span class="slider-value" id="val-${paramName}-${step.id}">${valDisplay}</span>
+                    <span class="control-label">${escapeHTML(paramDef.label)}</span>
+                    <span class="slider-value" id="val-${escapeHTML(paramName)}-${escapeHTML(step.id)}">${escapeHTML(valDisplay)}</span>
                 </div>
-                <input type="range" class="custom-range" data-param="${paramName}" min="${paramDef.min}" max="${paramDef.max}" step="${paramDef.step}" value="${step[paramName]}">
+                <input type="range" class="custom-range" data-param="${escapeHTML(paramName)}" min="${escapeHTML(paramDef.min)}" max="${escapeHTML(paramDef.max)}" step="${escapeHTML(paramDef.step)}" value="${escapeHTML(step[paramName])}">
             `;
         } else if (paramDef.type === 'select') {
             let selectOptions = '';
             paramDef.options.forEach(opt => {
-                selectOptions += `<option value="${opt}" ${step[paramName] === opt ? 'selected' : ''}>${opt}</option>`;
+                selectOptions += `<option value="${escapeHTML(opt)}" ${step[paramName] === opt ? 'selected' : ''}>${escapeHTML(opt)}</option>`;
             });
             html += `
-                <span class="control-label">${paramDef.label}</span>
+                <span class="control-label">${escapeHTML(paramDef.label)}</span>
                 <div class="select-wrapper">
-                    <select class="custom-select" data-param="${paramName}">
+                    <select class="custom-select" data-param="${escapeHTML(paramName)}">
                         ${selectOptions}
                     </select>
                 </div>
             `;
         } else if (paramDef.type === 'color') {
             html += `
-                <span class="control-label">${paramDef.label}</span>
+                <span class="control-label">${escapeHTML(paramDef.label)}</span>
                 <div class="color-picker-wrapper">
-                    <input type="color" class="custom-color-picker" data-param="${paramName}" value="${step[paramName]}">
-                    <input type="text" class="custom-color-text" data-param="${paramName}" value="${step[paramName]}">
+                    <input type="color" class="custom-color-picker" data-param="${escapeHTML(paramName)}" value="${escapeHTML(step[paramName])}">
+                    <input type="text" class="custom-color-text" data-param="${escapeHTML(paramName)}" value="${escapeHTML(step[paramName])}">
                 </div>
             `;
         } else if (paramDef.type === 'bool') {
             html += `
                 <div class="toggle-container">
-                    <span class="control-label">${paramDef.label}</span>
+                    <span class="control-label">${escapeHTML(paramDef.label)}</span>
                     <label class="switch">
-                        <input type="checkbox" data-param="${paramName}" ${step[paramName] ? 'checked' : ''}>
+                        <input type="checkbox" data-param="${escapeHTML(paramName)}" ${step[paramName] ? 'checked' : ''}>
                         <span class="slider-switch"></span>
                     </label>
                 </div>
@@ -245,7 +284,7 @@ export function createPipelineCardElement(step, index) {
                     }
                 </button>
                 <span class="step-num">#${index + 1}</span>
-                <span class="step-name">${getStepName(step.type)}</span>
+                <span class="step-name">${escapeHTML(getStepName(step.type))}</span>
                 ${isBaseline ? '<span class="baseline-badge">Baseline</span>' : ''}
             </div>
             <div class="pipeline-card-actions">
@@ -276,7 +315,7 @@ export function createPipelineCardElement(step, index) {
             <div class="control-group step-strength-wrapper">
                 <div class="slider-header">
                     <span class="control-label">Step Strength (Dry/Wet Blend)</span>
-                    <span class="slider-value" id="val-step-strength-${step.id}">${strength}%</span>
+                    <span class="slider-value" id="val-step-strength-${escapeHTML(step.id)}">${strength}%</span>
                 </div>
                 <input type="range" class="custom-range strength-range" data-param="step_strength" min="0" max="100" step="5" value="${strength}">
             </div>
@@ -343,7 +382,7 @@ export function importPreset(file, onLoadCallback) {
                         // Check if layer requires blending settings (i.e. not normal, or has opacity < 100)
                         const requiresBlending = layer.blend_mode !== "normal" || layer.opacity < 100 || layer.blend_interpolation !== "Bicubic (Sharp)";
                         if (requiresBlending) {
-                            const blendStepId = 'step_blend_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+                            const blendStepId = 'step_blend_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
                             const blendStep = {
                                 id: blendStepId,
                                 type: "blend",

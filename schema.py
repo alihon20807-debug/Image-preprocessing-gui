@@ -750,6 +750,29 @@ OPERATIONS_SCHEMA = {
                         "Extract Dark Details (Black Hat)"
                     ]
                 }
+            },
+            "skel_threshold": {
+                "label": "Skeletonization Threshold",
+                "type": "int",
+                "default": 128,
+                "min": 0,
+                "max": 255,
+                "step": 1,
+                "visible_if": {
+                    "operation": ["Skeletonization (Thinning)"]
+                }
+            },
+            "foreground_mode": {
+                "label": "Foreground Mode",
+                "type": "select",
+                "default": "White strokes (Dark background)",
+                "options": [
+                    "Black strokes (Light background)", 
+                    "White strokes (Dark background)"
+                ],
+                "visible_if": {
+                    "operation": ["Skeletonization (Thinning)"]
+                }
             }
         }
     },
@@ -917,7 +940,7 @@ OPERATIONS_SCHEMA = {
                 "step": 5
             },
             "blend_interpolation": {
-                "label": "Upscale Filter",
+                "label": "Blend Interpolation",
                 "type": "select",
                 "default": "Bicubic (Sharp)",
                 "options": ["Bilinear (Fast)", "Bicubic (Sharp)", "Lanczos (Ultra Sharp)", "Nearest Neighbor"]
@@ -987,7 +1010,19 @@ def validate_step_params(step_type, params):
                 raise ValueError(f"Constraint Violation: Parameter '{label}' has invalid Hex formatting. Got '{val}'")
         elif p_type == "select":
             options = param_def.get("options", [])
-            # Convert option values if needed for exact match
+            # Coerce value if options are numbers
+            if options and all(isinstance(opt, int) for opt in options):
+                try:
+                    val = int(val)
+                    params[param_name] = val
+                except (ValueError, TypeError):
+                    pass
+            elif options and all(isinstance(opt, (int, float)) for opt in options):
+                try:
+                    val = float(val)
+                    params[param_name] = val
+                except (ValueError, TypeError):
+                    pass
             if val not in options:
                 raise ValueError(f"Value Violation: Parameter '{label}' must be one of {options}. Got '{val}'")
         elif p_type == "step_id_reference":

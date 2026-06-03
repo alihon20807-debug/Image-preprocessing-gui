@@ -40,8 +40,16 @@ export function setupNodeEditorTheme() {
 export function registerCustomNodes(onGraphChangeCallback) {
     if (typeof LiteGraph === 'undefined') return;
 
-    // Clear all default, unneeded built-in LiteGraph node groups
-    LiteGraph.clearRegisteredTypes();
+    // Selectively clear default, unneeded built-in LiteGraph node groups
+    if (LiteGraph.registered_node_types) {
+        const keepCategories = new Set(["image", "filter", "layer"]);
+        for (const typeName of Object.keys(LiteGraph.registered_node_types)) {
+            const category = typeName.split('/')[0];
+            if (!keepCategories.has(category)) {
+                delete LiteGraph.registered_node_types[typeName];
+            }
+        }
+    }
 
     // Helper: Register change trigger on parameter widgets
     function bindWidgetTrigger(node, widget) {
@@ -160,6 +168,13 @@ export function registerCustomNodes(onGraphChangeCallback) {
                         }
                     }
 
+                    const wDisabled = this.addWidget("toggle", "Disabled", this.properties.disabled, (val) => {
+                        this.properties.disabled = val;
+                        this.mode = val ? LiteGraph.NEVER : LiteGraph.ALWAYS;
+                    });
+                    wDisabled.originalType = wDisabled.type;
+                    bindWidgetTrigger(this, wDisabled);
+
                     const wStrength = this.addWidget("slider", "Step Strength", this.properties.strength, (val) => {
                         this.properties.strength = parseInt(val);
                     }, { min: 0, max: 100, step: 5 });
@@ -203,7 +218,7 @@ export function registerCustomNodes(onGraphChangeCallback) {
                 }
 
                 updateWidgetsVisibility() {
-                    let visibleCount = 1; // Strength slider is always visible
+                    let visibleCount = 2; // Strength and Disabled sliders/checkboxes are always visible
 
                     if (opDef.params) {
                         for (const [paramName, paramDef] of Object.entries(opDef.params)) {
@@ -275,8 +290,14 @@ function getTopologicalOrder(graph) {
         }
     }
     
+    // First sort output paths
     const outputNodes = (graph._nodes || []).filter(n => n.type === "image/preview" || n.type === "image/baseline");
     for (let node of outputNodes) {
+        visit(node);
+    }
+    // Then append disconnected components so they are not deleted on mode switch
+    const allNodes = graph._nodes || [];
+    for (let node of allNodes) {
         visit(node);
     }
     return sorted;
@@ -308,16 +329,13 @@ export function compileGraphToPipeline(graph) {
         return `node_${parentNode.id}`;
     }
 
-    sortedNodes.forEach(node => {
-        if (node.type === "image/load" || node.type === "image/preview") {
-            return;
-        }
+    const loadNode = graph._nodes.find(n => n.type === "image/load");
+    const previewNode = graph._nodes.find(n => n.type === "image/preview");
+    const baselineNode = graph._nodes.find(n => n.type === "image/baseline");
 
-        if (node.type === "image/baseline") {
-            comparisonBaseline = getOriginSource(node, 0);
-            return;
-        }
+    const filterNodes = sortedNodes.filter(node => node.type !== "image/load" && node.type !== "image/preview" && node.type !== "image/baseline");
 
+    filterNodes.forEach((node, idx) => {
         const stepType = node.type.replace(/^filter\//, "").replace(/^layer\//, "");
         const stepId = `node_${node.id}`;
         
@@ -325,8 +343,10 @@ export function compileGraphToPipeline(graph) {
             id: stepId,
             type: stepType,
             disabled: node.mode === LiteGraph.NEVER || node.properties.disabled === true,
+            collapsed: node.flags && node.flags.collapsed === true,
             strength: node.properties.strength !== undefined ? node.properties.strength : 100,
-            input_source: getOriginSource(node, 0)
+            input_source: getOriginSource(node, 0),
+            position: [node.pos[0], node.pos[1]]
         };
 
         // Shallow copy all other custom properties into the step parameter list
@@ -340,8 +360,25 @@ export function compileGraphToPipeline(graph) {
             step.blend_source = getOriginSource(node, 1);
         }
 
+        // Save static node coordinates to preserve positions
+        if (idx === 0 && loadNode) {
+            step.load_position = [loadNode.pos[0], loadNode.pos[1]];
+        }
+        if (idx === filterNodes.length - 1 && previewNode) {
+            step.preview_position = [previewNode.pos[0], previewNode.pos[1]];
+        }
+        if (baselineNode && getOriginSource(baselineNode, 0) === step.id) {
+            step.baseline_position = [baselineNode.pos[0], baselineNode.pos[1]];
+        }
+
         pipeline.push(step);
     });
+
+    if (baselineNode) {
+        comparisonBaseline = getOriginSource(baselineNode, 0);
+    } else {
+        comparisonBaseline = "original";
+    }
 
     return { pipeline, comparisonBaseline };
 }
@@ -382,7 +419,12 @@ export function rebuildGraphFromPipeline(pipeline, graph) {
 
     // 1. Create Load Image Node
     const nLoad = LiteGraph.createNode("image/load");
-    nLoad.pos = [80, 180];
+    const firstStep = pipeline[0];
+    if (firstStep && firstStep.load_position) {
+        nLoad.pos = [firstStep.load_position[0], firstStep.load_position[1]];
+    } else {
+        nLoad.pos = [80, 180];
+    }
     graph.add(nLoad);
     nodeMap["original"] = nLoad;
 
@@ -406,6 +448,7 @@ export function rebuildGraphFromPipeline(pipeline, graph) {
             disabled: step.disabled === true,
             strength: step.strength !== undefined ? step.strength : 100
         };
+        node.mode = step.disabled === true ? LiteGraph.NEVER : LiteGraph.ALWAYS;
         
         // Populate parameters from schema
         const opDef = state.schema ? state.schema[step.type] : null;
@@ -418,8 +461,18 @@ export function rebuildGraphFromPipeline(pipeline, graph) {
         }
         
         // Position
-        node.pos = [currentX, yOffset];
-        currentX += 280;
+        if (step.position && Array.isArray(step.position)) {
+            node.pos = [step.position[0], step.position[1]];
+        } else {
+            node.pos = [currentX, yOffset];
+            currentX += 280;
+        }
+
+        // Collapse state
+        if (step.collapsed === true) {
+            node.flags = node.flags || {};
+            node.flags.collapsed = true;
+        }
         
         // Set widget values matching properties
         if (node.widgets) {
@@ -428,6 +481,8 @@ export function rebuildGraphFromPipeline(pipeline, graph) {
                     w.value = node.properties[w.paramName];
                 } else if (w.name === "Step Strength") {
                     w.value = node.properties.strength;
+                } else if (w.name === "Disabled") {
+                    w.value = node.properties.disabled;
                 }
             });
         }
@@ -469,11 +524,15 @@ export function rebuildGraphFromPipeline(pipeline, graph) {
 
     // 4. Create Preview Node
     const nPreview = LiteGraph.createNode("image/preview");
-    nPreview.pos = [currentX, 100];
+    const lastStep = pipeline[pipeline.length - 1];
+    if (lastStep && lastStep.preview_position) {
+        nPreview.pos = [lastStep.preview_position[0], lastStep.preview_position[1]];
+    } else {
+        nPreview.pos = [currentX, 100];
+    }
     graph.add(nPreview);
 
     if (pipeline.length > 0) {
-        const lastStep = pipeline[pipeline.length - 1];
         const lastNode = nodeMap[lastStep.id];
         if (lastNode) {
             lastNode.connect(0, nPreview, 0);
@@ -486,7 +545,12 @@ export function rebuildGraphFromPipeline(pipeline, graph) {
     const compareBaseline = state.comparisonBaseline || "original";
     if (compareBaseline && compareBaseline !== "none") {
         const nBaseline = LiteGraph.createNode("image/baseline");
-        nBaseline.pos = [currentX, 380];
+        const baselineStep = pipeline.find(s => s.baseline_position);
+        if (baselineStep && baselineStep.baseline_position) {
+            nBaseline.pos = [baselineStep.baseline_position[0], baselineStep.baseline_position[1]];
+        } else {
+            nBaseline.pos = [currentX, 380];
+        }
         graph.add(nBaseline);
         const baselineParent = nodeMap[compareBaseline];
         if (baselineParent) {

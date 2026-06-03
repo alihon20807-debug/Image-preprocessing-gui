@@ -99,6 +99,7 @@
     width: 100%;
     height: 100%;
     overflow: hidden;
+    touch-action: none;
 }
 
 .interactive-canvas {
@@ -116,9 +117,22 @@
     transform-style: preserve-3d;
 }
 
-#processed-canvas {
+#processed-wrapper {
     z-index: 2;
+    pointer-events: none;
+    transform-origin: 0 0;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+    transform-style: preserve-3d;
     transition: opacity 0.1s ease;
+}
+
+#processed-wrapper .interactive-canvas {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
 }
 
 #original-canvas {

@@ -307,7 +307,9 @@
                     <div class="view-body" id="comparison-view-container">
                         <div class="canvas-wrapper" id="canvas-wrapper">
                             <canvas id="original-canvas" class="interactive-canvas"></canvas>
-                            <canvas id="processed-canvas" class="interactive-canvas"></canvas>
+                            <div id="processed-wrapper" class="interactive-canvas-wrapper" style="position: absolute; left: 0; top: 0; pointer-events: none;">
+                                <canvas id="processed-canvas" class="interactive-canvas"></canvas>
+                            </div>
                             <div id="split-divider" class="split-divider">
                                 <div class="split-handle">↔</div>
                             </div>

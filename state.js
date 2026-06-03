@@ -23,12 +23,13 @@ export const state = {
     schema: {}, // Stores OPERATIONS_SCHEMA fetched from backend
     comparisonBaseline: "original", // ID of step for baseline comparison, or "original"
     originalImageUploaded: false, // Tracks if the original image has been cached on the backend
-    sourceFileName: 'testimg.png' // Filename of active image source
+    sourceFileName: 'testimg.png', // Filename of active image source
+    currentMode: 'studio' // Current editor mode (studio or node)
 };
 
 export function createDefaultStep(type, schema = null) {
     const step = {
-        id: 'step_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+        id: 'step_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
         type: type,
         disabled: false,
         strength: 100,
@@ -50,6 +51,7 @@ export function createDefaultStep(type, schema = null) {
 export const elements = {
     originalCanvas: document.getElementById('original-canvas'),
     processedCanvas: document.getElementById('processed-canvas'),
+    processedWrapper: document.getElementById('processed-wrapper'),
     offscreenCanvas: document.createElement('canvas'), // GPU filter buffer
     canvasWrapper: document.getElementById('canvas-wrapper'),
     splitDivider: document.getElementById('split-divider'),

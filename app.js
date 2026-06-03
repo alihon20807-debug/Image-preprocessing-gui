@@ -11,7 +11,8 @@ import {
     updateCompareReferenceDropdown,
     generateStepId,
     exportPreset,
-    importPreset
+    importPreset,
+    updateStepCardParamVisibility
 } from './ui.js';
 import {
     setupNodeEditorTheme,
@@ -111,6 +112,11 @@ async function initApp() {
         }
     } catch (err) {
         console.error("Initialization error:", err);
+        showPipelineErrorOverlay(
+            "InitializationError",
+            "Failed to load the operations schema from the server. Please ensure the backend Python server is running and refresh the page.",
+            err.stack || err.toString()
+        );
     }
     
     loadImage('testimg.png');
@@ -181,30 +187,155 @@ function loadImage(src) {
 
 function setupEventListeners() {
     const container = document.getElementById('comparison-view-container');
-    
-    // --- Canvas Panning & Divider Dragging ---
-    container.addEventListener('mousedown', (e) => {
-        if (e.target.closest('#split-divider')) {
-            state.isDraggingDivider = true;
-            e.stopPropagation();
-            return;
-        }
+    if (container) {
+        container.addEventListener('mousedown', (e) => {
+            if (e.target.closest('#split-divider')) {
+                state.isDraggingDivider = true;
+                e.stopPropagation();
+                return;
+            }
+            
+            state.isDragging = true;
+            container.style.cursor = 'grabbing';
+            state.startPan = { x: e.clientX - state.transform.x, y: e.clientY - state.transform.y };
+        });
         
-        state.isDragging = true;
-        container.style.cursor = 'grabbing';
-        state.startPan = { x: e.clientX - state.transform.x, y: e.clientY - state.transform.y };
-    });
+        container.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            
+            const zoomIntensity = 0.1;
+            const rect = elements.canvasWrapper ? elements.canvasWrapper.getBoundingClientRect() : { left: 0, top: 0 };
+            
+            // Get mouse coordinates relative to the canvas-wrapper
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            // Convert to canvas coordinates (before zoom is applied)
+            const currentScale = Math.max(0.1, state.transform.scale || 1.0);
+            const canvasX = (mouseX - state.transform.x) / currentScale;
+            const canvasY = (mouseY - state.transform.y) / currentScale;
+            
+            // Calculate new scale
+            let newScale;
+            if (e.deltaY < 0) {
+                newScale = currentScale * (1 + zoomIntensity);
+            } else {
+                newScale = currentScale / (1 + zoomIntensity);
+            }
+            
+            // Bound scale between 10% and 1500%
+            newScale = Math.max(0.1, Math.min(newScale, 15.0));
+            
+            // Adjust translation coordinates to keep zoom centered on mouse cursor
+            state.transform.x = mouseX - canvasX * newScale;
+            state.transform.y = mouseY - canvasY * newScale;
+            state.transform.scale = newScale;
+            
+            updateCanvasesTransform();
+        }, { passive: false });
+        
+        container.addEventListener('mousemove', (e) => {
+            const rect = elements.canvasWrapper ? elements.canvasWrapper.getBoundingClientRect() : { left: 0, top: 0, width: 1 };
+            state.mouseWrapperX = e.clientX - rect.left;
+            state.mouseWrapperY = e.clientY - rect.top;
+            
+            if (state.comparisonMode === "X-Ray Lens") {
+                updateComparisonView();
+            }
+            
+            if (state.originalWidth > 0) {
+                const canvasLeft = Math.round(state.transform.x);
+                const currentScale = Math.max(0.1, state.transform.scale || 1.0);
+                
+                const relativeX = (state.mouseWrapperX - canvasLeft) / currentScale;
+                const relativeY = (state.mouseWrapperY - state.transform.y) / currentScale;
+                
+                // Check if within image boundary before updating inspector coords
+                if (elements.originalCanvas && relativeX >= 0 && relativeX < elements.originalCanvas.width && relativeY >= 0 && relativeY < elements.originalCanvas.height) {
+                    updatePixelInspector(Math.floor(relativeX), Math.floor(relativeY));
+                } else {
+                    clearPixelInspector();
+                }
+            }
+        });
+        
+        container.addEventListener('mouseleave', () => {
+            clearPixelInspector();
+        });
+
+        // Touch event handlers for mobile panning & pinch-zoom
+        let touchStartDist = 0;
+        let touchStartScale = 1;
+        let isPinching = false;
+        
+        container.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 1) {
+                state.isDragging = true;
+                const touch = e.touches[0];
+                state.startPan = { x: touch.clientX - state.transform.x, y: touch.clientY - state.transform.y };
+                isPinching = false;
+            } else if (e.touches.length === 2) {
+                state.isDragging = false;
+                isPinching = true;
+                const t1 = e.touches[0];
+                const t2 = e.touches[1];
+                touchStartDist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+                touchStartScale = state.transform.scale || 1.0;
+            }
+        }, { passive: true });
+        
+        container.addEventListener('touchmove', (e) => {
+            if (state.isDragging && e.touches.length === 1) {
+                const touch = e.touches[0];
+                state.transform.x = touch.clientX - state.startPan.x;
+                state.transform.y = touch.clientY - state.startPan.y;
+                updateCanvasesTransform();
+            } else if (isPinching && e.touches.length === 2) {
+                e.preventDefault(); // prevent default zoom/scroll
+                const t1 = e.touches[0];
+                const t2 = e.touches[1];
+                const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+                if (touchStartDist > 0) {
+                    const factor = dist / touchStartDist;
+                    let newScale = touchStartScale * factor;
+                    newScale = Math.max(0.1, Math.min(newScale, 15.0));
+                    
+                    const rect = elements.canvasWrapper ? elements.canvasWrapper.getBoundingClientRect() : { left: 0, top: 0 };
+                    const centerX = (t1.clientX + t2.clientX) / 2 - rect.left;
+                    const centerY = (t1.clientY + t2.clientY) / 2 - rect.top;
+                    
+                    const currentScale = Math.max(0.1, state.transform.scale || 1.0);
+                    const canvasX = (centerX - state.transform.x) / currentScale;
+                    const canvasY = (centerY - state.transform.y) / currentScale;
+                    
+                    state.transform.x = centerX - canvasX * newScale;
+                    state.transform.y = centerY - canvasY * newScale;
+                    state.transform.scale = newScale;
+                    updateCanvasesTransform();
+                }
+            }
+        }, { passive: false });
+        
+        container.addEventListener('touchend', () => {
+            state.isDragging = false;
+            isPinching = false;
+        });
+        container.addEventListener('touchcancel', () => {
+            state.isDragging = false;
+            isPinching = false;
+        });
+    }
     
     window.addEventListener('mousemove', (e) => {
         // Handle split divider dragging
         if (state.isDraggingDivider) {
-            const rect = elements.canvasWrapper.getBoundingClientRect();
+            const rect = elements.canvasWrapper ? elements.canvasWrapper.getBoundingClientRect() : { left: 0, top: 0, width: 1 };
             let x = e.clientX - rect.left;
             x = Math.max(0, Math.min(x, rect.width));
             state.compPosition = (x / rect.width) * 100;
             
-            elements.compSlider.value = Math.round(state.compPosition);
-            elements.compSliderVal.textContent = `${Math.round(state.compPosition)}%`;
+            if (elements.compSlider) elements.compSlider.value = Math.round(state.compPosition);
+            if (elements.compSliderVal) elements.compSliderVal.textContent = `${Math.round(state.compPosition)}%`;
             updateComparisonView();
             return;
         }
@@ -220,72 +351,7 @@ function setupEventListeners() {
     window.addEventListener('mouseup', () => {
         state.isDragging = false;
         state.isDraggingDivider = false;
-        container.style.cursor = 'grab';
-    });
-    
-    // --- Zooming (Centered on Cursor) ---
-    container.addEventListener('wheel', (e) => {
-        e.preventDefault();
-        
-        const zoomIntensity = 0.1;
-        const rect = elements.canvasWrapper.getBoundingClientRect();
-        
-        // Get mouse coordinates relative to the canvas-wrapper
-        const mouseX = e.clientX - rect.left;
-        const mouseY = e.clientY - rect.top;
-        
-        // Convert to canvas coordinates (before zoom is applied)
-        const canvasX = (mouseX - state.transform.x) / state.transform.scale;
-        const canvasY = (mouseY - state.transform.y) / state.transform.scale;
-        
-        // Calculate new scale
-        let newScale;
-        if (e.deltaY < 0) {
-            newScale = state.transform.scale * (1 + zoomIntensity);
-        } else {
-            newScale = state.transform.scale / (1 + zoomIntensity);
-        }
-        
-        // Bound scale between 10% and 1500%
-        newScale = Math.max(0.1, Math.min(newScale, 15.0));
-        
-        // Adjust translation coordinates to keep zoom centered on mouse cursor
-        state.transform.x = mouseX - canvasX * newScale;
-        state.transform.y = mouseY - canvasY * newScale;
-        state.transform.scale = newScale;
-        
-        updateCanvasesTransform();
-    }, { passive: false });
-    
-    // --- Mouse Inspection Tracking ---
-    container.addEventListener('mousemove', (e) => {
-        const rect = elements.canvasWrapper.getBoundingClientRect();
-        state.mouseWrapperX = e.clientX - rect.left;
-        state.mouseWrapperY = e.clientY - rect.top;
-        
-        if (state.comparisonMode === "X-Ray Lens") {
-            updateComparisonView();
-        }
-        
-        if (state.originalWidth > 0) {
-            const canvasLeft = Math.round(state.transform.x);
-            const canvasWidth = elements.originalCanvas.width * state.transform.scale;
-            const canvasHeight = elements.originalCanvas.height * state.transform.scale;
-            
-            const relativeX = (state.mouseWrapperX - canvasLeft) / state.transform.scale;
-            const relativeY = (state.mouseWrapperY - state.transform.y) / state.transform.scale;
-            
-            // Check if within image boundary before updating inspector coords
-            if (relativeX >= 0 && relativeX < elements.originalCanvas.width && relativeY >= 0 && relativeY < elements.originalCanvas.height) {
-                updatePixelInspector(Math.floor(relativeX), Math.floor(relativeY));
-            } else {
-                clearPixelInspector();
-            }
-        }
-    });
-    
-    container.addEventListener('mouseleave', () => {
-        clearPixelInspector();
+        if (container) container.style.cursor = 'grab';
     });
     
     // --- Comparison Controls Selectors ---
@@ -365,43 +431,7 @@ function setupEventListeners() {
         updateComparisonView();
     });
     
-    // --- Keyboard Shortcuts for Comparison Modes ---
-    let lastActiveBaseline = "original";
-    window.addEventListener('keydown', (e) => {
-        const activeTag = document.activeElement.tagName;
-        if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT') {
-            return;
-        }
-        
-        if (e.key === 'Tab') {
-            e.preventDefault();
-            if (state.comparisonBaseline !== 'none') {
-                lastActiveBaseline = state.comparisonBaseline;
-                state.comparisonBaseline = 'none';
-            } else {
-                state.comparisonBaseline = lastActiveBaseline || 'original';
-            }
-            if (elements.compareReferenceSelect) {
-                elements.compareReferenceSelect.value = state.comparisonBaseline;
-                elements.compareReferenceSelect.dispatchEvent(new Event('change'));
-            }
-        } else if (e.key === '1') {
-            triggerModeChange("Split Slider");
-        } else if (e.key === '2') {
-            triggerModeChange("Overlay Opacity");
-        } else if (e.key === '3') {
-            triggerModeChange("Pixel Difference");
-        } else if (e.key === '4') {
-            triggerModeChange("X-Ray Lens");
-        }
-    });
 
-    function triggerModeChange(mode) {
-        if (elements.compModeSelect) {
-            elements.compModeSelect.value = mode;
-            elements.compModeSelect.dispatchEvent(new Event('change'));
-        }
-    }
     
     // --- File Drag and Drop Triggers ---
     elements.dropzone.addEventListener('click', () => elements.fileInput.click());
@@ -412,17 +442,29 @@ function setupEventListeners() {
         }
     });
     
-    elements.dropzone.addEventListener('dragover', (e) => {
+    let dragCounter = 0;
+    elements.dropzone.addEventListener('dragenter', (e) => {
         e.preventDefault();
+        dragCounter++;
         elements.dropzone.classList.add('dragover');
     });
     
-    elements.dropzone.addEventListener('dragleave', () => {
-        elements.dropzone.classList.remove('dragover');
+    elements.dropzone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+    });
+    
+    elements.dropzone.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        dragCounter--;
+        if (dragCounter <= 0) {
+            dragCounter = 0;
+            elements.dropzone.classList.remove('dragover');
+        }
     });
     
     elements.dropzone.addEventListener('drop', (e) => {
         e.preventDefault();
+        dragCounter = 0;
         elements.dropzone.classList.remove('dragover');
         if (e.dataTransfer.files.length > 0) {
             handleUploadedFile(e.dataTransfer.files[0]);
@@ -469,6 +511,9 @@ function setupEventListeners() {
             
             if (e.target.closest('.btn-delete')) {
                 state.pipeline = state.pipeline.filter(s => s.id !== stepId);
+                if (state.comparisonBaseline === stepId) {
+                    state.comparisonBaseline = "original";
+                }
                 renderPipeline();
                 triggerDebouncedProcess();
             } else if (e.target.closest('.btn-toggle-enable')) {
@@ -543,13 +588,19 @@ function setupEventListeners() {
                 if (textInput) textInput.value = e.target.value;
             }
         } else if (e.target.classList.contains('custom-color-text')) {
-            const hex = e.target.value;
+            let hex = e.target.value.trim();
+            if (/^[0-9A-Fa-f]{6}$/.test(hex)) {
+                hex = '#' + hex;
+            }
             if (/^#[0-9A-Fa-f]{6}$/.test(hex)) {
                 const wrapper = e.target.closest('.color-picker-wrapper');
                 if (wrapper) {
                     const colorInput = wrapper.querySelector('.custom-color-picker');
                     if (colorInput) colorInput.value = hex;
                 }
+                step[param] = hex;
+                triggerDebouncedProcess();
+                return;
             } else {
                 // Ignore invalid hex while typing
                 return;
@@ -586,19 +637,61 @@ function setupEventListeners() {
                 if (el) el.textContent = step[param].toFixed(1) + (param === 'scale' && step.type === 'upsample' ? 'x' : '');
             } else if (paramDef.type === 'bool') {
                 step[param] = val === true || val === 'true';
-                renderPipeline();
+                updateStepCardParamVisibility(card, step);
             } else {
-                step[param] = val; // select or color
+                let finalVal = val;
                 if (paramDef.type === 'select') {
-                    renderPipeline();
+                    const options = paramDef.options || [];
+                    if (options.length > 0 && typeof options[0] === 'number') {
+                        finalVal = Number(val);
+                    }
+                }
+                step[param] = finalVal; // select or color
+                if (paramDef.type === 'select') {
+                    updateStepCardParamVisibility(card, step);
                 }
             }
             triggerDebouncedProcess();
         }
     });
     
-    // Initial pipeline stack rendering on load
-    renderPipeline();;
+    elements.layersListContainer.addEventListener('change', (e) => {
+        if (e.target.classList.contains('custom-color-text')) {
+            const card = e.target.closest('.pipeline-card');
+            if (!card) return;
+            
+            const id = card.dataset.id;
+            const step = state.pipeline.find(s => s.id === id);
+            if (!step) return;
+            
+            const param = e.target.dataset.param;
+            if (!param) return;
+            
+            let hex = e.target.value.trim();
+            if (/^[0-9A-Fa-f]{6}$/.test(hex)) {
+                hex = '#' + hex;
+            } else if (/^[0-9A-Fa-f]{3}$/.test(hex)) {
+                hex = '#' + hex;
+            }
+            
+            if (/^#[0-9A-Fa-f]{3}$/.test(hex)) {
+                hex = '#' + hex[1] + hex[1] + hex[2] + hex[2] + hex[3] + hex[3];
+            }
+            
+            if (/^#[0-9A-Fa-f]{6}$/.test(hex)) {
+                step[param] = hex;
+                e.target.value = hex;
+                const wrapper = e.target.closest('.color-picker-wrapper');
+                if (wrapper) {
+                    const colorInput = wrapper.querySelector('.custom-color-picker');
+                    if (colorInput) colorInput.value = hex;
+                }
+                triggerDebouncedProcess();
+            } else {
+                e.target.value = step[param] || '#000000';
+            }
+        }
+    });
     
     // Reset View & Download
     elements.resetViewBtn.addEventListener('click', autoFitImage);
@@ -660,37 +753,54 @@ function setupEventListeners() {
 
         // Ignore standard single-key shortcuts if user is typing in inputs or editable elements
         const activeEl = document.activeElement;
-        if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable)) {
+        if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'SELECT' || activeEl.isContentEditable)) {
             return;
         }
         
-        const modeKeys = {
-            '1': 'Split Slider',
-            '2': 'Overlay Opacity',
-            '3': 'Pixel Difference',
-            '4': 'X-Ray Lens'
-        };
-        
-        if (modeKeys[e.key]) {
+        if (e.key === '`') {
             e.preventDefault();
-            const chosenMode = modeKeys[e.key];
-            if (elements.compModeSelect && elements.compModeSelect.value !== chosenMode) {
-                elements.compModeSelect.value = chosenMode;
-                elements.compModeSelect.dispatchEvent(new Event('change'));
+            if (state.comparisonBaseline !== 'none') {
+                lastActiveBaseline = state.comparisonBaseline;
+                state.comparisonBaseline = 'none';
+            } else {
+                state.comparisonBaseline = lastActiveBaseline || 'original';
             }
-        } else if (e.key === '[' || e.key === ']') {
-            e.preventDefault();
-            const targetPos = e.key === '[' ? 0 : 100;
-            state.compPosition = targetPos;
-            if (elements.compSlider) {
-                elements.compSlider.value = targetPos;
-                if (state.comparisonMode === "X-Ray Lens") {
-                    elements.compSliderVal.textContent = `${Math.round(targetPos * 2.5 + 40)}px`;
-                } else {
-                    elements.compSliderVal.textContent = `${targetPos}%`;
+            if (elements.compareReferenceSelect) {
+                elements.compareReferenceSelect.value = state.comparisonBaseline;
+                elements.compareReferenceSelect.dispatchEvent(new Event('change'));
+            }
+        } else {
+            const modeKeys = {
+                '1': 'Split Slider',
+                '2': 'Overlay Opacity',
+                '3': 'Pixel Difference',
+                '4': 'X-Ray Lens'
+            };
+            
+            if (modeKeys[e.key]) {
+                e.preventDefault();
+                const chosenMode = modeKeys[e.key];
+                if (elements.compModeSelect && elements.compModeSelect.value !== chosenMode) {
+                    elements.compModeSelect.value = chosenMode;
+                    elements.compModeSelect.dispatchEvent(new Event('change'));
                 }
+            } else if (e.key === '[' || e.key === ']') {
+                e.preventDefault();
+                let targetPos = e.key === '[' ? 0 : 100;
+                if (state.comparisonMode === "X-Ray Lens" && targetPos < 5) {
+                    targetPos = 5;
+                }
+                state.compPosition = targetPos;
+                if (elements.compSlider) {
+                    elements.compSlider.value = targetPos;
+                    if (state.comparisonMode === "X-Ray Lens") {
+                        elements.compSliderVal.textContent = `${Math.round(targetPos * 2.5 + 40)}px`;
+                    } else {
+                        elements.compSliderVal.textContent = `${targetPos}%`;
+                    }
+                }
+                updateComparisonView();
             }
-            updateComparisonView();
         }
     });
 
@@ -792,12 +902,21 @@ function setupEventListeners() {
 }
 
 function handleUploadedFile(file) {
-    state.sourceFileName = file.name;
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        loadImage(e.target.result);
-    };
-    reader.readAsDataURL(file);
+    if (file.name.endsWith('.json') || file.type === 'application/json') {
+        importPreset(file, () => {
+            if (state.currentMode === 'node' && isGraphInitialized && graph) {
+                rebuildGraphFromPipeline(state.pipeline, graph);
+            }
+            triggerDebouncedProcess();
+        });
+    } else {
+        state.sourceFileName = file.name;
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            loadImage(e.target.result);
+        };
+        reader.readAsDataURL(file);
+    }
 }
 
 // ----------------- Image Processing API Pipeline -----------------
@@ -853,10 +972,17 @@ function processImage() {
     // Export original canvas to base64 only if it has not been cached on backend yet
     let originalBase64 = "cached";
     if (!state.originalImageUploaded) {
-        const offCtx = elements.offscreenCanvas.getContext('2d');
-        offCtx.clearRect(0, 0, state.originalWidth, state.originalHeight);
-        offCtx.drawImage(state.originalImage, 0, 0);
-        originalBase64 = elements.offscreenCanvas.toDataURL('image/png');
+        try {
+            const offCtx = elements.offscreenCanvas.getContext('2d');
+            offCtx.clearRect(0, 0, state.originalWidth, state.originalHeight);
+            offCtx.drawImage(state.originalImage, 0, 0);
+            originalBase64 = elements.offscreenCanvas.toDataURL('image/png');
+        } catch (e) {
+            console.error("SecurityError: Canvas is tainted. Cross-origin image drop/upload is blocked from export without CORS.", e);
+            showPipelineErrorOverlay("SecurityError", "Unable to process this image because it is from a different website and doesn't permit cross-origin access (CORS). Please download the image to your computer first and upload it.", e.stack || e.toString());
+            isProcessing = false;
+            return;
+        }
     }
     
     // Pack the ordered flat pipeline stack to send to Flask OpenCV
@@ -939,7 +1065,7 @@ function processImage() {
                 state.originalImageUploaded = false;
                 isProcessing = false;
                 processImage();
-                throw new Error('Image cache miss. Retrying upload...');
+                return Promise.reject({ name: 'CacheMissRetry' });
             }
             
             showPipelineErrorOverlay(errType, errMsg, errTrace);
@@ -986,6 +1112,11 @@ function processImage() {
                         
                         elements.originalCanvas.width = origImg.width;
                         elements.originalCanvas.height = origImg.height;
+                        state.originalWidth = origImg.width;
+                        state.originalHeight = origImg.height;
+                        if (elements.statusDim) {
+                            elements.statusDim.textContent = `${state.originalWidth} × ${state.originalHeight} px`;
+                        }
                         ogCtx.imageSmoothingEnabled = false;
                         ogCtx.clearRect(0, 0, origImg.width, origImg.height);
                         ogCtx.drawImage(origImg, 0, 0);
@@ -1030,6 +1161,10 @@ function processImage() {
             currentAbortController = null;
         }
         
+        if (err && err.name === 'CacheMissRetry') {
+            return;
+        }
+        
         if (err.name === 'AbortError') {
             isProcessing = false;
             if (pendingProcess) {
@@ -1048,11 +1183,16 @@ function processImage() {
 // ----------------- Actions -----------------
 
 function downloadProcessedImage() {
-    const dataUrl = elements.processedCanvas.toDataURL('image/png');
-    const link = document.createElement('a');
-    link.download = 'preprocessed_image.png';
-    link.href = dataUrl;
-    link.click();
+    try {
+        const dataUrl = elements.processedCanvas.toDataURL('image/png');
+        const link = document.createElement('a');
+        link.download = 'preprocessed_image.png';
+        link.href = dataUrl;
+        link.click();
+    } catch (e) {
+        console.error("SecurityError: Cannot download tainted canvas.", e);
+        alert("Unable to download this image due to canvas cross-origin restrictions (CORS). Please ensure you run the app on a local server and load images locally.");
+    }
 }
 
 // ----------------- Layout Maximizing Actions -----------------
@@ -1150,12 +1290,22 @@ function setupSidebarResizer() {
         e.preventDefault();
     });
     
+    resizer.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 1) {
+            isResizing = true;
+            resizer.classList.add('active');
+            document.body.style.cursor = 'ew-resize';
+            document.body.style.userSelect = 'none';
+            e.preventDefault();
+        }
+    }, { passive: false });
+    
     window.addEventListener('mousemove', (e) => {
         if (!isResizing) return;
         
         let newWidth = e.clientX;
-        // Limit width between 260px and 800px
-        newWidth = Math.max(260, Math.min(newWidth, 800));
+        const maxWidth = Math.max(260, window.innerWidth - 100);
+        newWidth = Math.max(260, Math.min(newWidth, maxWidth));
         
         appContainer.style.setProperty('--sidebar-width', `${newWidth}px`);
         
@@ -1169,7 +1319,43 @@ function setupSidebarResizer() {
         });
     });
     
+    window.addEventListener('touchmove', (e) => {
+        if (!isResizing || e.touches.length !== 1) return;
+        
+        let newWidth = e.touches[0].clientX;
+        const maxWidth = Math.max(260, window.innerWidth - 100);
+        newWidth = Math.max(260, Math.min(newWidth, maxWidth));
+        
+        appContainer.style.setProperty('--sidebar-width', `${newWidth}px`);
+        
+        requestAnimationFrame(() => {
+            if (isGraphInitialized && lCanvas) {
+                lCanvas.resize();
+                lCanvas.setDirty(true, true);
+            }
+            autoFitImage();
+        });
+    }, { passive: false });
+    
     window.addEventListener('mouseup', () => {
+        if (isResizing) {
+            isResizing = false;
+            resizer.classList.remove('active');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+        }
+    });
+    
+    window.addEventListener('touchend', () => {
+        if (isResizing) {
+            isResizing = false;
+            resizer.classList.remove('active');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+        }
+    });
+    
+    window.addEventListener('touchcancel', () => {
         if (isResizing) {
             isResizing = false;
             resizer.classList.remove('active');
