@@ -25,8 +25,7 @@ export const state = {
     schema: {}, // Stores OPERATIONS_SCHEMA fetched from backend
     comparisonBaseline: "original", // ID of step for baseline comparison, or "original"
     originalImageUploaded: false, // Tracks if the original image has been cached on the backend
-    sourceFileName: 'testimg.png', // Filename of active image source
-    currentMode: 'studio' // Current editor mode (studio or node)
+    sourceFileName: 'testimg.png' // Filename of active image source
 };
 
 export function createDefaultStep(type, schema = null) {

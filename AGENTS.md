@@ -28,7 +28,7 @@ This guide outlines non-obvious constraints, architecture details, and commands 
 
 ## 🧩 Architectural Flow & Synchronization
 
-The application is an interactive OpenCV image processing builder with two modes: **Layer Studio** and **Node Flow** (powered by direct-loaded `litegraph.min.js`).
+The application is an interactive OpenCV image processing builder powered by the **Layer Studio** pipeline.
 
 ### How Requests Flow
 1. Frontend makes API requests to `/schema` and `/process`.
@@ -41,7 +41,7 @@ The application is an interactive OpenCV image processing builder with two modes
 * To fully invalidate the cache, call `POST /clear-cache` (using the UI's reload features) or re-upload the target image.
 
 ### Adding / Modifying Operations
-When adding a new processing operation, you **must** update exactly three places:
+When adding a new processing operation, you **must** update:
 1. `schema.py`: Define properties in `OPERATIONS_SCHEMA` (handles parameter validation, constraints like `odd_only` for blurs, and visibility).
 2. `processor.py`: Write the `apply_*` processing function and register it in `PROCESSING_REGISTRY`.
-3. Frontend (`nodes.js` / `ui.js` / `app.js`): Register UI elements and compile graph nodes to match the new schema properties.
+3. Frontend (`ui.js` / `app.js`): Register UI elements to match the new schema properties.
