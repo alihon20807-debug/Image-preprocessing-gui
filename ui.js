@@ -1,13 +1,12 @@
 // ui.js
 // Dynamic Schema-Driven UI Generator for Preprocessing Studio
 
-import { state, elements, createDefaultStep } from './state.js';
+import { state, elements } from './state.js';
 import { updateComparisonView } from './viewer.js';
 
 export function escapeHTML(str) {
     if (str === null || str === undefined) return '';
-    const StringClass = String(str);
-    return StringClass.replace(/[&<>'"]/g, 
+    return String(str).replace(/[&<>'"]/g, 
         tag => ({
             '&': '&amp;',
             '<': '&lt;',
@@ -20,6 +19,21 @@ export function escapeHTML(str) {
 
 export function generateStepId() {
     return 'step_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+}
+
+function computeVisibility(paramName, paramDef, step) {
+    if (step.type === 'fill' && (paramName === 'target_color' || paramName === 'tolerance')) {
+        const mode = step.fill_mode;
+        const chromaModes = ['Color Replacement (Chroma Key)', 'Content-Aware Inpainting (NS)', 'Content-Aware Inpainting (Telea)'];
+        if (chromaModes.includes(mode)) return true;
+        if (mode === 'Hole Filling (Contours)') return step.use_target_color === true;
+        return false;
+    }
+    if (!paramDef.visible_if) return true;
+    for (const [depName, allowedValues] of Object.entries(paramDef.visible_if)) {
+        if (!allowedValues.includes(step[depName])) return false;
+    }
+    return true;
 }
 
 export function getStepName(type) {
@@ -53,36 +67,48 @@ export function getStepCategory(type) {
     }
 }
 
-export function updateCompareReferenceDropdown() {
-    if (!elements.compareReferenceSelect) return;
-    const selectedVal = state.comparisonBaseline;
-    elements.compareReferenceSelect.innerHTML = `
-        <option value="none">None (Show Processed Only)</option>
-        <option value="original">Original Image</option>
-    `;
-    
+function populateSourceDropdown(selectEl, selectedVal, includeNone, includePipeline) {
+    if (!selectEl) return;
+    selectEl.innerHTML = '';
+    if (includeNone) {
+        const opt = document.createElement('option');
+        opt.value = 'none';
+        opt.textContent = 'None (Show Processed Only)';
+        selectEl.appendChild(opt);
+    }
+    if (includePipeline) {
+        const opt = document.createElement('option');
+        opt.value = 'pipeline';
+        opt.textContent = 'Pipeline Result';
+        selectEl.appendChild(opt);
+    }
+    const origOpt = document.createElement('option');
+    origOpt.value = 'original';
+    origOpt.textContent = 'Original Image';
+    selectEl.appendChild(origOpt);
+
     state.pipeline.forEach((step, idx) => {
         const stepOpt = document.createElement('option');
         stepOpt.value = step.id;
         stepOpt.textContent = `Step #${idx + 1}: ${getStepName(step.type)}` + (step.disabled ? ' (Disabled)' : '');
-        if (step.disabled) {
-            stepOpt.disabled = true;
-        }
-        elements.compareReferenceSelect.appendChild(stepOpt);
+        if (step.disabled) stepOpt.disabled = true;
+        selectEl.appendChild(stepOpt);
     });
-    
-    // Verify if comparisonBaseline still exists and is enabled, fallback if not
-    let exists = selectedVal === "none" || selectedVal === "original";
+
+    let exists = [...(includeNone ? ['none'] : []), ...(includePipeline ? ['pipeline'] : []), 'original'].includes(selectedVal);
     if (!exists) {
         exists = state.pipeline.some(s => s.id === selectedVal && !s.disabled);
     }
-    
     if (!exists) {
-        state.comparisonBaseline = "original";
-        elements.compareReferenceSelect.value = "original";
+        selectEl.value = includePipeline ? 'pipeline' : 'original';
     } else {
-        elements.compareReferenceSelect.value = selectedVal;
+        selectEl.value = selectedVal;
     }
+}
+
+export function updateCompareSourceDropdowns() {
+    populateSourceDropdown(elements.compareReferenceSelect, state.comparisonBaseline, true, false);
+    populateSourceDropdown(elements.comparisonProcessedSelect, state.comparisonProcessed, false, true);
 }
 
 export function renderPipeline() {
@@ -91,7 +117,7 @@ export function renderPipeline() {
     
     elements.layersListContainer.innerHTML = '';
     
-    updateCompareReferenceDropdown();
+    updateCompareSourceDropdowns();
     
     if (state.pipeline.length === 0) {
         elements.layersListContainer.innerHTML = `
@@ -119,30 +145,7 @@ export function updateStepCardParamVisibility(stepCard, step) {
     if (!schema || !schema.params) return;
     
     for (const [paramName, paramDef] of Object.entries(schema.params)) {
-        if (!paramDef.visible_if && !(step.type === 'fill' && (paramName === 'target_color' || paramName === 'tolerance'))) continue;
-        
-        let isVisible = true;
-        
-        // Custom override for target_color / tolerance under fill step (Bug 14 / Bug 24)
-        if (step.type === 'fill' && (paramName === 'target_color' || paramName === 'tolerance')) {
-            const mode = step.fill_mode;
-            const chromaModes = ['Color Replacement (Chroma Key)', 'Content-Aware Inpainting (NS)', 'Content-Aware Inpainting (Telea)'];
-            if (chromaModes.includes(mode)) {
-                isVisible = true;
-            } else if (mode === 'Hole Filling (Contours)') {
-                isVisible = step.use_target_color === true;
-            } else {
-                isVisible = false;
-            }
-        } else {
-            for (const [depName, allowedValues] of Object.entries(paramDef.visible_if)) {
-                if (!allowedValues.includes(step[depName])) {
-                    isVisible = false;
-                    break;
-                }
-            }
-        }
-        
+        const isVisible = computeVisibility(paramName, paramDef, step);
         const paramEl = stepCard.querySelector(`.param-group[data-param-name="${paramName}"]`);
         if (paramEl) {
             paramEl.style.display = isVisible ? 'block' : 'none';
@@ -153,6 +156,18 @@ export function updateStepCardParamVisibility(stepCard, step) {
 function renderStepParams(step, index) {
     const schema = state.schema[step.type];
     if (!schema || !schema.params) return '';
+
+    // Validate input_source — reset to 'previous' if it references a deleted/invalid step
+    const validInputSources = new Set(state.pipeline.slice(0, index).map(s => s.id));
+    validInputSources.add('previous');
+    validInputSources.add('original');
+    if (step.input_source !== undefined && !validInputSources.has(step.input_source)) {
+        step.input_source = 'previous';
+    }
+    // Validate blend_source similarly
+    if (step.blend_source !== undefined && !validInputSources.has(step.blend_source)) {
+        step.blend_source = 'previous';
+    }
     
     let html = '';
     
@@ -202,34 +217,14 @@ function renderStepParams(step, index) {
             continue;
         }
         
-        // Evaluate dynamic visible_if logic
-        let isVisible = true;
-        if (step.type === 'fill' && (paramName === 'target_color' || paramName === 'tolerance')) {
-            const mode = step.fill_mode;
-            const chromaModes = ['Color Replacement (Chroma Key)', 'Content-Aware Inpainting (NS)', 'Content-Aware Inpainting (Telea)'];
-            if (chromaModes.includes(mode)) {
-                isVisible = true;
-            } else if (mode === 'Hole Filling (Contours)') {
-                isVisible = step.use_target_color === true;
-            } else {
-                isVisible = false;
-            }
-        } else if (paramDef.visible_if) {
-            for (const [depName, allowedValues] of Object.entries(paramDef.visible_if)) {
-                if (!allowedValues.includes(step[depName])) {
-                    isVisible = false;
-                    break;
-                }
-            }
-        }
-        
+        const isVisible = computeVisibility(paramName, paramDef, step);
         const displayStyle = isVisible ? 'block' : 'none';
         
         html += `<div class="control-group param-group" data-param-name="${escapeHTML(paramName)}" style="display: ${displayStyle};">`;
         
         if (paramDef.type === 'int' || paramDef.type === 'float') {
             const rawVal = step[paramName] !== undefined && step[paramName] !== null ? step[paramName] : paramDef.default;
-            const valDisplay = (paramDef.type === 'float') ? rawVal.toFixed(1) : (rawVal >= 0 && paramName === 'brightness' ? '+' + rawVal : rawVal);
+            const valDisplay = (paramDef.type === 'float') ? rawVal.toFixed(1) + (paramName === 'scale' && step.type === 'upsample' ? 'x' : '') : (rawVal >= 0 && paramName === 'brightness' ? '+' + rawVal : rawVal);
             html += `
                 <div class="slider-header">
                     <span class="control-label">${escapeHTML(paramDef.label)}</span>
@@ -322,7 +317,7 @@ export function createPipelineCardElement(step, index) {
                       `<svg class="icon" viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`
                     }
                 </button>
-                <button class="action-btn btn-set-baseline ${isBaseline ? 'active' : ''}" title="Set as Comparison Baseline">
+                <button class="action-btn btn-set-baseline ${isBaseline ? 'active' : ''}" title="${isBaseline ? 'Remove Baseline' : 'Set as Comparison Baseline'}">
                     <svg class="icon" viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
                 </button>
                 <button class="action-btn btn-up" title="Move Up" ${index === 0 ? 'disabled' : ''}>
@@ -379,6 +374,11 @@ export function importPreset(file, onLoadCallback) {
                 
                 if (isFlatPipelinePreset || isLegacyStepsPreset) {
                     // Import directly, map legacy type variables if needed
+                    if (isLegacyStepsPreset) {
+                        imported.forEach(step => {
+                            if (step.input_source === undefined) step.input_source = 'previous';
+                        });
+                    }
                     state.pipeline = imported;
                     renderPipeline();
                     if (onLoadCallback) onLoadCallback();

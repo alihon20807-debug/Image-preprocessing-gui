@@ -90,6 +90,11 @@ body {
     box-shadow: 0 0 10px var(--primary-glow) !important;
 }
 
+/* Generic hidden utility (add/remove via JS classList) */
+.hidden {
+    display: none !important;
+}
+
 /* Premium Error Overlay & Modal styling */
 .error-overlay {
     position: fixed;

@@ -250,8 +250,8 @@ def process():
                 # Store computed result in persistent cache
                 _pipeline_cache_matrices[step_id] = out_img
                 
-            # Save the executed pipeline configuration
-            _last_pipeline_state = copy.deepcopy(params['pipeline'])
+            # Save the executed pipeline configuration (resolved form, not raw — fixes cache divergence scan)
+            _last_pipeline_state = copy.deepcopy(pipeline)
             
             # Resolve the final processed image
             if pipeline:
@@ -259,8 +259,11 @@ def process():
                 processed = _pipeline_cache_matrices.get(last_step_id, img)
             else:
                 processed = img
-                
-            # Resolve comparison baseline fallback
+
+            # Save pipeline result before comparison_processed potentially overwrites `processed`
+            pipeline_result_img = processed.copy()
+
+            # Resolve comparison baseline fallback (Compare Source A)
             if comparison_baseline == "original":
                 baseline_img = _cached_original_img.copy()
             elif comparison_baseline in _pipeline_cache_matrices:
@@ -268,6 +271,14 @@ def process():
             else:
                 baseline_img = _cached_original_img.copy()
                 
+            # Resolve comparison processed image (Compare Source B)
+            comparison_processed = params.get('comparison_processed', 'pipeline')
+            if comparison_processed == "original":
+                processed = _cached_original_img.copy()
+            elif comparison_processed in _pipeline_cache_matrices:
+                processed = _pipeline_cache_matrices[comparison_processed]
+            # else 'pipeline' or unrecognized → keep pipeline result as-is
+            
             # Ensure baseline and processed have identical spatial dimensions for comparison view
             if baseline_img.shape[:2] != processed.shape[:2]:
                 baseline_img = cv2.resize(baseline_img, (processed.shape[1], processed.shape[0]))
@@ -293,9 +304,14 @@ def process():
                 baseline_b64 = base64.b64encode(baseline_buf).decode('utf-8')
                 baseline_url = f"data:image/png;base64,{baseline_b64}"
                 
+            _, pipeline_buf = cv2.imencode('.png', pipeline_result_img)
+            pipeline_b64 = base64.b64encode(pipeline_buf).decode('utf-8')
+            pipeline_result_url = f"data:image/png;base64,{pipeline_b64}"
+
             return jsonify({
                 "processed_image": processed_url,
-                "original_image": baseline_url
+                "original_image": baseline_url,
+                "pipeline_result": pipeline_result_url
             })
             
         except (ValueError, TypeError, KeyError) as val_err:

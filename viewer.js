@@ -26,9 +26,11 @@ export function autoFitImage() {
 }
 
 export function updateCanvasesTransform() {
-    let upsampleScale = 1.0;
-    if (elements.originalCanvas.width > 0) {
-        upsampleScale = elements.processedCanvas.width / elements.originalCanvas.width;
+    let upsampleScaleX = 1.0;
+    let upsampleScaleY = 1.0;
+    if (elements.originalCanvas.width > 0 && elements.originalCanvas.height > 0) {
+        upsampleScaleX = elements.processedCanvas.width / elements.originalCanvas.width;
+        upsampleScaleY = elements.processedCanvas.height / elements.originalCanvas.height;
     }
     
     // Round translation to prevent sub-pixel snapping disparities on different GPU layers
@@ -36,7 +38,7 @@ export function updateCanvasesTransform() {
     const y = Math.round(state.transform.y);
     
     const ogTransformStr = `translate3d(${x}px, ${y}px, 0px) scale(${state.transform.scale})`;
-    const procTransformStr = `translate3d(${x}px, ${y}px, 0px) scale(${state.transform.scale / upsampleScale})`;
+    const procTransformStr = `translate3d(${x}px, ${y}px, 0px) scale(${state.transform.scale / upsampleScaleX}, ${state.transform.scale / upsampleScaleY})`;
     
     elements.originalCanvas.style.transform = ogTransformStr;
     if (elements.processedWrapper) {
@@ -115,20 +117,22 @@ export function updateComparisonView() {
         // Convert screen cursor wrapper coordinates to canvas local percentages
         const canvasLeftOffset = Math.round(state.transform.x);
         const scaleVal = Math.max(0.1, state.transform.scale || 1.0);
-        let upsampleScale = 1.0;
-        if (elements.originalCanvas.width > 0) {
-            upsampleScale = elements.processedCanvas.width / elements.originalCanvas.width;
+        let upX = 1.0, upY = 1.0;
+        if (elements.originalCanvas.width > 0 && elements.originalCanvas.height > 0) {
+            upX = elements.processedCanvas.width / elements.originalCanvas.width;
+            upY = elements.processedCanvas.height / elements.originalCanvas.height;
         }
-        const scaleValProc = scaleVal / upsampleScale;
-        const relativeXProc = (state.mouseWrapperX - canvasLeftOffset) / scaleValProc;
-        const relativeYProc = (state.mouseWrapperY - state.transform.y) / scaleValProc;
+        const scaleValProcX = scaleVal / upX;
+        const scaleValProcY = scaleVal / upY;
+        const relativeXProc = (state.mouseWrapperX - canvasLeftOffset) / scaleValProcX;
+        const relativeYProc = (state.mouseWrapperY - Math.round(state.transform.y)) / scaleValProcY;
         
         const localXPct = (relativeXProc / elements.processedCanvas.width) * 100;
         const localYPct = (relativeYProc / elements.processedCanvas.height) * 100;
         
         // Keep the circle radius constant in screen pixels regardless of zoom
         const R = state.compPosition * 2.5 + 40; // slider range maps to 40px - 290px spotlight
-        const localRadius = R / scaleValProc;
+        const localRadius = R / scaleValProcX;
         
         procTarget.style.clipPath = `circle(${localRadius}px at ${localXPct}% ${localYPct}%)`;
     }
@@ -176,6 +180,21 @@ export function updatePixelInspector(x, y) {
         elements.statusRgb.textContent = `RGB(Blocked)`;
         elements.colorPreview.style.backgroundColor = 'transparent';
     }
+}
+
+export function resetComparisonOverlays() {
+    const procTarget = elements.processedWrapper || elements.processedCanvas;
+    if (!procTarget) return;
+    procTarget.style.mixBlendMode = "normal";
+    procTarget.style.opacity = "1.0";
+    procTarget.style.clipPath = "none";
+    if (elements.processedWrapper) {
+        elements.processedCanvas.style.mixBlendMode = "normal";
+        elements.processedCanvas.style.opacity = "1.0";
+        elements.processedCanvas.style.clipPath = "none";
+    }
+    elements.originalCanvas.style.visibility = "visible";
+    elements.splitDivider.classList.add("hidden");
 }
 
 export function clearPixelInspector() {

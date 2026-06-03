@@ -23,7 +23,8 @@ export const state = {
     // Flat Pipeline builder state
     pipeline: [], // Holds flat steps stack
     schema: {}, // Stores OPERATIONS_SCHEMA fetched from backend
-    comparisonBaseline: "original", // ID of step for baseline comparison, or "original"
+    comparisonBaseline: "original", // ID of step for Compare Source A, or "original"
+    comparisonProcessed: "pipeline", // ID of step for Compare Source B, or "original", or "pipeline"
     originalImageUploaded: false, // Tracks if the original image has been cached on the backend
     sourceFileName: 'testimg.png' // Filename of active image source
 };
@@ -65,6 +66,7 @@ export const elements = {
     // Comparison controls
     compModeSelect: document.getElementById('comparison-mode'),
     compareReferenceSelect: document.getElementById('compare-reference'),
+    comparisonProcessedSelect: document.getElementById('comparison-processed'),
     compSlider: document.getElementById('comp-slider'),
     compSliderLabel: document.getElementById('comp-slider-label'),
     compSliderVal: document.getElementById('comp-slider-val'),

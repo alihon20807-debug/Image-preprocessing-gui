@@ -4,11 +4,12 @@ import {
     updateCanvasesTransform,
     updateComparisonView,
     updatePixelInspector,
-    clearPixelInspector
+    clearPixelInspector,
+    resetComparisonOverlays
 } from './viewer.js';
 import {
     renderPipeline,
-    updateCompareReferenceDropdown,
+    updateCompareSourceDropdowns,
     generateStepId,
     exportPreset,
     importPreset,
@@ -16,6 +17,7 @@ import {
 } from './ui.js';
 
 let lastDrawnBaseline = null;
+let lastPipelineResultUrl = null;
 
 // ----------------- Initialization & Loading -----------------
 
@@ -52,7 +54,6 @@ async function initApp() {
     
     loadImage('testimg.png');
     setupEventListeners();
-    state.onProcessTrigger = triggerDebouncedProcess;
 }
 
 window.addEventListener('DOMContentLoaded', () => {
@@ -80,6 +81,7 @@ function loadImage(src) {
         
         // Draw original once onto originalCanvas
         const ogCtx = elements.originalCanvas.getContext('2d');
+        ogCtx.imageSmoothingEnabled = false;
         ogCtx.drawImage(state.originalImage, 0, 0);
         
         // Setup status bar metadata
@@ -191,6 +193,9 @@ function setupEventListeners() {
         
         container.addEventListener('mouseleave', () => {
             clearPixelInspector();
+            if (state.comparisonMode === "X-Ray Lens") {
+                resetComparisonOverlays();
+            }
         });
 
         // Touch event handlers for mobile panning & pinch-zoom
@@ -265,11 +270,6 @@ function setupEventListeners() {
                     const centerX = (t1.clientX + t2.clientX) / 2 - rect.left;
                     const centerY = (t1.clientY + t2.clientY) / 2 - rect.top;
                     
-                    const deltaX = centerX - touchLastCenter.x;
-                    const deltaY = centerY - touchLastCenter.y;
-                    state.transform.x += deltaX;
-                    state.transform.y += deltaY;
-                    
                     const canvasX = (centerX - state.transform.x) / currentScale;
                     const canvasY = (centerY - state.transform.y) / currentScale;
                     
@@ -338,7 +338,7 @@ function setupEventListeners() {
     
     // --- Comparison Controls Selectors ---
     // --- Comparison Controls Selectors ---
-    elements.compModeSelect.addEventListener('change', (e) => {
+    if (elements.compModeSelect) elements.compModeSelect.addEventListener('change', (e) => {
         state.comparisonMode = e.target.value;
         
         // Synchronize active states on segmented buttons
@@ -399,11 +399,20 @@ function setupEventListeners() {
     
     elements.compareReferenceSelect.addEventListener('change', (e) => {
         state.comparisonBaseline = e.target.value;
+        lastActiveBaseline = e.target.value;
         renderPipeline();
         triggerDebouncedProcess();
     });
     
-    elements.compSlider.addEventListener('input', (e) => {
+    if (elements.comparisonProcessedSelect) {
+        elements.comparisonProcessedSelect.addEventListener('change', (e) => {
+            state.comparisonProcessed = e.target.value;
+            renderPipeline();
+            triggerDebouncedProcess();
+        });
+    }
+    
+    if (elements.compSlider) elements.compSlider.addEventListener('input', (e) => {
         state.compPosition = parseInt(e.target.value);
         if (state.comparisonMode === "X-Ray Lens") {
             elements.compSliderVal.textContent = `${Math.round(state.compPosition * 2.5 + 40)}px`;
@@ -424,29 +433,29 @@ function setupEventListeners() {
         }
     });
     
-    let dragCounter = 0;
+    let dragActive = false;
     elements.dropzone.addEventListener('dragenter', (e) => {
         e.preventDefault();
-        dragCounter++;
+        dragActive = true;
         elements.dropzone.classList.add('dragover');
     });
     
     elements.dropzone.addEventListener('dragover', (e) => {
         e.preventDefault();
+        dragActive = true;
     });
     
     elements.dropzone.addEventListener('dragleave', (e) => {
         e.preventDefault();
-        dragCounter--;
-        if (dragCounter <= 0) {
-            dragCounter = 0;
-            elements.dropzone.classList.remove('dragover');
-        }
+        dragActive = false;
+        setTimeout(() => {
+            if (!dragActive) elements.dropzone.classList.remove('dragover');
+        }, 50);
     });
     
     elements.dropzone.addEventListener('drop', (e) => {
         e.preventDefault();
-        dragCounter = 0;
+        dragActive = false;
         elements.dropzone.classList.remove('dragover');
         if (e.dataTransfer.files.length > 0) {
             handleUploadedFile(e.dataTransfer.files[0]);
@@ -482,6 +491,9 @@ function setupEventListeners() {
                 state.pipeline = state.pipeline.filter(s => s.id !== stepId);
                 if (state.comparisonBaseline === stepId) {
                     state.comparisonBaseline = "original";
+                }
+                if (state.comparisonProcessed === stepId) {
+                    state.comparisonProcessed = "pipeline";
                 }
                 renderPipeline();
                 triggerDebouncedProcess();
@@ -663,16 +675,16 @@ function setupEventListeners() {
     });
     
     // Reset View & Download
-    elements.resetViewBtn.addEventListener('click', autoFitImage);
-    elements.downloadBtn.addEventListener('click', downloadProcessedImage);
+    if (elements.resetViewBtn) elements.resetViewBtn.addEventListener('click', autoFitImage);
+    if (elements.downloadBtn) elements.downloadBtn.addEventListener('click', downloadProcessedImage);
     
     // --- JSON Preset Import/Export ---
     const exportBtn = document.getElementById('export-preset-btn');
     const importBtn = document.getElementById('import-preset-btn');
     const importFile = document.getElementById('import-preset-file');
     
-    exportBtn.addEventListener('click', exportPreset);
-    importBtn.addEventListener('click', () => importFile.click());
+    if (exportBtn) exportBtn.addEventListener('click', exportPreset);
+    if (importBtn) importBtn.addEventListener('click', () => importFile.click());
     
     importFile.addEventListener('change', (e) => {
         if (e.target.files.length === 0) return;
@@ -790,6 +802,10 @@ function handleUploadedFile(file) {
         reader.onload = function(e) {
             loadImage(e.target.result);
         };
+        reader.onerror = function() {
+            console.error("FileReader failed to read file:", file.name);
+            showPipelineErrorOverlay("FileReadError", "Failed to read the selected file. The file may be corrupted, locked, or too large.");
+        };
         reader.readAsDataURL(file);
     }
 }
@@ -800,6 +816,8 @@ let isProcessing = false;
 let pendingProcess = false;
 let debounceTimer = null;
 let currentAbortController = null;
+let processRetryCount = 0;
+const MAX_PROCESS_RETRIES = 3;
 
 // Debouncing prevents spamming network calls to Flask during drag actions
 function triggerDebouncedProcess() {
@@ -860,13 +878,8 @@ function processImage() {
         }
     }
     
-    // Pack the ordered flat pipeline stack to send to Flask OpenCV
-    let pipelineToSend = state.pipeline;
-    let baselineToSend = state.comparisonBaseline;
-    
-
     // We send a clone of the pipeline as-is. Caching and "previous" resolutions are handled by Flask backend.
-    const clonedPipeline = JSON.parse(JSON.stringify(pipelineToSend));
+    const clonedPipeline = JSON.parse(JSON.stringify(state.pipeline));
 
     const abortController = new AbortController();
     currentAbortController = abortController;
@@ -875,7 +888,8 @@ function processImage() {
     const params = {
         image: originalBase64,
         pipeline: clonedPipeline,
-        comparison_baseline: baselineToSend
+        comparison_baseline: state.comparisonBaseline,
+        comparison_processed: state.comparisonProcessed
     };
     
     fetch('/process', {
@@ -913,6 +927,11 @@ function processImage() {
             
             if (requireReupload) {
                 // Backend cache missed (e.g. server restarted). Force re-upload.
+                if (processRetryCount >= MAX_PROCESS_RETRIES) {
+                    showPipelineErrorOverlay("CacheMissError", "Failed to re-synchronize with the backend after multiple attempts. Please reload the page or clear the backend cache.");
+                    throw new Error("Max retries exceeded for cache miss recovery.");
+                }
+                processRetryCount++;
                 state.originalImageUploaded = false;
                 isProcessing = false;
                 processImage();
@@ -931,52 +950,54 @@ function processImage() {
         
         // Hide error overlay on success
         hidePipelineErrorOverlay();
+        processRetryCount = 0;
         
         if (result.processed_image && result.original_image) {
+            if (result.pipeline_result) {
+                lastPipelineResultUrl = result.pipeline_result;
+            }
             // Mark original image as successfully cached on server
             state.originalImageUploaded = true;
             
-            const loadProc = new Promise((resolve) => {
+            const loadProc = new Promise((resolve, reject) => {
                 if (result.original_image === "original") {
                     resolve(state.originalImage);
                 } else {
                     const img = new Image();
                     img.onload = () => resolve(img);
+                    img.onerror = () => reject(new Error("Failed to load baseline image from server"));
                     img.src = result.original_image;
                 }
             });
-            const loadProcImg = new Promise((resolve) => {
+            const loadProcImg = new Promise((resolve, reject) => {
                 const img = new Image();
                 img.onload = () => resolve(img);
+                img.onerror = () => reject(new Error("Failed to load processed image from server"));
                 img.src = result.processed_image;
             });
             
             Promise.all([loadProcImg, loadProc]).then(([procImg, origImg]) => {
-                // Cache baseline dimensions for correct auto-fitting and coordinate checks (Bug 8)
+                // Show processed image dimensions in status bar
                 if (elements.statusDim) {
-                    elements.statusDim.textContent = `${origImg.width} × ${origImg.height} px`;
+                    elements.statusDim.textContent = `${procImg.width} × ${procImg.height} px`;
                 }
 
-                // Draw original canvas ONLY if size changes or we loaded a non-static baseline
+                // Draw original (Source A) canvas — always redraw from response
                 const ogCtx = elements.originalCanvas.getContext('2d');
                 if (elements.originalCanvas.width !== origImg.width || elements.originalCanvas.height !== origImg.height) {
                     elements.originalCanvas.width = origImg.width;
                     elements.originalCanvas.height = origImg.height;
-                    ogCtx.imageSmoothingEnabled = false;
-                    ogCtx.drawImage(origImg, 0, 0);
-                } else if (result.original_image !== "original") {
-                    ogCtx.imageSmoothingEnabled = false;
-                    ogCtx.drawImage(origImg, 0, 0);
                 }
+                ogCtx.imageSmoothingEnabled = false;
+                ogCtx.drawImage(origImg, 0, 0);
                 
-                // Draw processed canvas ONLY if size changes or draw updates
+                // Draw processed (Source B) canvas — always redraw from response
                 const procCtx = elements.processedCanvas.getContext('2d', { willReadFrequently: true });
                 if (elements.processedCanvas.width !== procImg.width || elements.processedCanvas.height !== procImg.height) {
                     elements.processedCanvas.width = procImg.width;
                     elements.processedCanvas.height = procImg.height;
                 }
                 procCtx.imageSmoothingEnabled = false;
-                // Avoid clearRect to prevent processed canvas flash (Bug 10)
                 procCtx.drawImage(procImg, 0, 0);
                 
                 isProcessing = false;
@@ -987,10 +1008,11 @@ function processImage() {
                 
                 // Refresh transform scales to keep layout stacked perfectly
                 updateCanvasesTransform();
+                autoFitImage();
 
             });
         } else {
-            console.error("Error from backend:", result.error || "Missing image data in response");
+            console.error("Missing image data in response from backend");
             isProcessing = false;
         }
     })
@@ -1002,6 +1024,8 @@ function processImage() {
         if (err && err.name === 'CacheMissRetry') {
             return;
         }
+
+        hidePipelineErrorOverlay();
         
         if (err.name === 'AbortError') {
             isProcessing = false;
@@ -1022,7 +1046,7 @@ function processImage() {
 
 function downloadProcessedImage() {
     try {
-        const dataUrl = elements.processedCanvas.toDataURL('image/png');
+        const dataUrl = lastPipelineResultUrl || elements.processedCanvas.toDataURL('image/png');
         const link = document.createElement('a');
         link.download = 'preprocessed_image.png';
         link.href = dataUrl;
