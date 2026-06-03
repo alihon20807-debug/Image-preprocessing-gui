@@ -2,7 +2,9 @@ import { state, elements } from './state.js';
 
 // Automatically scales and centers the image inside container
 export function autoFitImage() {
-    if (state.originalWidth === 0) return;
+    const refWidth = elements.originalCanvas.width || state.originalWidth;
+    const refHeight = elements.originalCanvas.height || state.originalHeight;
+    if (refWidth === 0) return;
     
     const container = document.getElementById('comparison-view-container');
     if (!container || container.clientWidth === 0 || container.clientHeight === 0) return;
@@ -11,13 +13,13 @@ export function autoFitImage() {
     const cHeight = container.clientHeight;
     
     // Choose the scale that fits both dimensions
-    const scaleX = cWidth / state.originalWidth;
-    const scaleY = cHeight / state.originalHeight;
+    const scaleX = cWidth / refWidth;
+    const scaleY = cHeight / refHeight;
     const optimalScale = Math.min(scaleX, scaleY, 1) * 0.9; // 90% fit
     
     // Center alignment
-    const x = (cWidth - state.originalWidth * optimalScale) / 2;
-    const y = (cHeight - state.originalHeight * optimalScale) / 2;
+    const x = (cWidth - refWidth * optimalScale) / 2;
+    const y = (cHeight - refHeight * optimalScale) / 2;
     
     state.transform = { x, y, scale: optimalScale };
     updateCanvasesTransform();
@@ -38,8 +40,8 @@ export function updateCanvasesTransform() {
     
     elements.originalCanvas.style.transform = ogTransformStr;
     if (elements.processedWrapper) {
-        elements.processedWrapper.style.width = `${elements.originalCanvas.width}px`;
-        elements.processedWrapper.style.height = `${elements.originalCanvas.height}px`;
+        elements.processedWrapper.style.width = `${elements.processedCanvas.width}px`;
+        elements.processedWrapper.style.height = `${elements.processedCanvas.height}px`;
         elements.processedWrapper.style.transform = procTransformStr;
         elements.processedCanvas.style.transform = "none";
     } else {
@@ -95,9 +97,10 @@ export function updateComparisonView() {
         // Convert screen divider x to canvas local percentage
         const localDividerX = (dividerX - canvasLeft) / canvasWidth;
         const localDividerPct = localDividerX * 100;
+        const clampedPct = Math.max(0, Math.min(100, localDividerPct));
         
         // Apply vertical clipPath polygon to right-side processed canvas
-        procTarget.style.clipPath = `polygon(${localDividerPct}% 0%, 100% 0%, 100% 100%, ${localDividerPct}% 100%)`;
+        procTarget.style.clipPath = `polygon(${clampedPct}% 0%, 100% 0%, 100% 100%, ${clampedPct}% 100%)`;
         
     } else if (state.comparisonMode === "Overlay Opacity") {
         // Opacity control
@@ -112,20 +115,20 @@ export function updateComparisonView() {
         // Convert screen cursor wrapper coordinates to canvas local percentages
         const canvasLeftOffset = Math.round(state.transform.x);
         const scaleVal = Math.max(0.1, state.transform.scale || 1.0);
-        const relativeX = (state.mouseWrapperX - canvasLeftOffset) / scaleVal;
-        const relativeY = (state.mouseWrapperY - state.transform.y) / scaleVal;
-        
-        const localXPct = (relativeX / elements.originalCanvas.width) * 100;
-        const localYPct = (relativeY / elements.originalCanvas.height) * 100;
-        
-        // Keep the circle radius constant in screen pixels regardless of zoom
-        const R = state.compPosition * 2.5 + 40; // slider range maps to 40px - 290px spotlight
-        
         let upsampleScale = 1.0;
         if (elements.originalCanvas.width > 0) {
             upsampleScale = elements.processedCanvas.width / elements.originalCanvas.width;
         }
-        const localRadius = (R * upsampleScale) / scaleVal;
+        const scaleValProc = scaleVal / upsampleScale;
+        const relativeXProc = (state.mouseWrapperX - canvasLeftOffset) / scaleValProc;
+        const relativeYProc = (state.mouseWrapperY - state.transform.y) / scaleValProc;
+        
+        const localXPct = (relativeXProc / elements.processedCanvas.width) * 100;
+        const localYPct = (relativeYProc / elements.processedCanvas.height) * 100;
+        
+        // Keep the circle radius constant in screen pixels regardless of zoom
+        const R = state.compPosition * 2.5 + 40; // slider range maps to 40px - 290px spotlight
+        const localRadius = R / scaleValProc;
         
         procTarget.style.clipPath = `circle(${localRadius}px at ${localXPct}% ${localYPct}%)`;
     }
@@ -159,9 +162,10 @@ export function updatePixelInspector(x, y) {
         
         // Scale coordinates if targetCanvas is processedCanvas
         if (targetCanvas === elements.processedCanvas) {
-            const upsampleScale = elements.originalCanvas.width > 0 ? elements.processedCanvas.width / elements.originalCanvas.width : 1.0;
-            px = Math.round(x * upsampleScale);
-            py = Math.round(y * upsampleScale);
+            const upsampleScaleX = elements.originalCanvas.width > 0 ? elements.processedCanvas.width / elements.originalCanvas.width : 1.0;
+            const upsampleScaleY = elements.originalCanvas.height > 0 ? elements.processedCanvas.height / elements.originalCanvas.height : 1.0;
+            px = Math.round(x * upsampleScaleX);
+            py = Math.round(y * upsampleScaleY);
         }
         
         const pixel = displayCtx.getImageData(px, py, 1, 1).data;

@@ -1,47 +1,53 @@
 # Developer Agent Guide (`AGENTS.md`)
 
-This guide outlines non-obvious constraints, architecture details, and commands necessary to work effectively on this repository.
+Non-obvious constraints and architecture details an agent would likely miss without help.
 
 ---
 
-## 🚨 Critical Filename Spelling Quirk
-* **Backend Entrypoint:** `preprocceser.py` (spelled with double **"c"** and **"s"** -> `pre-pro-c-c-e-s-e-r.py`).
-  * **Do NOT** attempt to run `preprocessor.py` (which is the algorithms library) or `preprocesser.py` (which does not exist) as the entrypoint.
+## 🚨 Critical: Entrypoint Spelling
+
+`preprocceser.py` — double **c**, single **s** (`pre-pro-c-c-e-s-e-r`). **Do NOT** run `preprocessor.py` (the algorithms library) or `preprocesser.py` (doesn't exist).
 
 ---
 
-## 🛠️ Developer Commands & Environment
+## Developer Commands
 
-### Running the App
-* **Start local backend server:**
-  ```bash
-  python preprocceser.py
-  ```
-  * Serves on: `http://localhost:5001/index.html` (acts as static server for the frontend in `.`).
-  * Main dependencies: `flask`, `numpy`, `opencv-python` (`cv2`).
+```bash
+python preprocceser.py                 # Start on http://localhost:5001/index.html
+```
+Dependencies: `flask`, `numpy`, `opencv-python` (`cv2`).
 
-### Linting & Testing
-* **No local verification runners:** There are no configured test framework (e.g., pytest, Jest), linter, or compiler scripts in this project.
-* **Verification strategy:** Manual verification by running the server on port 5001 and testing functionality inside the browser.
+No test/lint/typecheck framework — verify manually in browser. Default test image: `testimg.png`.
 
 ---
 
-## 🧩 Architectural Flow & Synchronization
+## Architecture
 
-The application is an interactive OpenCV image processing builder powered by the **Layer Studio** pipeline.
+### Backend (`preprocceser.py`)
+- **`/schema` GET** — returns `OPERATIONS_SCHEMA` from `schema.py` (drives all frontend UI generation).
+- **`/process` POST** — validates pipeline DAG (`schema.verify_pipeline_dag`), validates params (`schema.validate_step_params`), executes via `PROCESSING_REGISTRY` (`processor.py`).
+- **`/clear-cache` POST** — invalidates in-memory matrix cache (`_pipeline_cache_matrices`). **Must call this after modifying processing algorithms** or intermediate steps return stale results.
+- Caching uses divergence-index scan: compares new pipeline to `_last_pipeline_state`, re-executes only dirty steps.
 
-### How Requests Flow
-1. Frontend makes API requests to `/schema` and `/process`.
-2. `preprocceser.py` validates the uploaded step DAG topological sorting (`schema.verify_pipeline_dag`) and checks parameters (`schema.validate_step_params`).
-3. Core processing calls mapped functions in `PROCESSING_REGISTRY` (`processor.py`).
+### Frontend (ES modules, no bundler)
+- `state.js` — single state singleton + DOM element cache.
+- `ui.js` — schema-driven DOM rendering (`renderPipeline`, `createPipelineCardElement`).
+- `viewer.js` — canvas painting, zoom/pan, comparison modes (Split/Blend/Diff/X-Ray).
+- `app.js` — orchestration: event binding, `processImage()`, preset import/export.
 
-### Backend Matrix Caching (Gotcha!)
-* `preprocceser.py` maintains an in-memory cache of intermediate matrices (`_pipeline_cache_matrices`).
-* If you modify any processing algorithm, previous steps may still return cached results. 
-* To fully invalidate the cache, call `POST /clear-cache` (using the UI's reload features) or re-upload the target image.
+---
 
-### Adding / Modifying Operations
-When adding a new processing operation, you **must** update:
-1. `schema.py`: Define properties in `OPERATIONS_SCHEMA` (handles parameter validation, constraints like `odd_only` for blurs, and visibility).
-2. `processor.py`: Write the `apply_*` processing function and register it in `PROCESSING_REGISTRY`.
-3. Frontend (`ui.js` / `app.js`): Register UI elements to match the new schema properties.
+## Adding / Modifying an Operation
+
+You **must** update all three layers:
+
+1. **`schema.py`** — add entry to `OPERATIONS_SCHEMA`. Defines params with types, ranges, `visible_if` conditional visibility, and `odd_only` constraint for blurs.
+2. **`processor.py`** — write `apply_*` function, register in `PROCESSING_REGISTRY` (dict at line 1391).
+3. **Frontend** (`ui.js` handles schema-driven rendering automatically for new params; no manual UI wiring needed unless adding custom controls).
+
+---
+
+## Cache Gotchas
+
+- Steps have a universal **Step Strength** (0–100% dry/wet blend) applied via `cv2.addWeighted` by the server. This is **not** part of the operation schema — it's added automatically by `preprocceser.py` for any step with a `strength` field.
+- The `blend` operation receives the full `_pipeline_cache_matrices` to look up its blend source by step ID.

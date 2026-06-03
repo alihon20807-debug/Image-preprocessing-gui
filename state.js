@@ -71,7 +71,7 @@ export const elements = {
     compSliderGroup: document.getElementById('comp-slider-group'),
 
     // Pipeline controls
-    addLayerBtn: document.getElementById('add-layer-btn'), // Mapping button for adding steps
+    addLayerBtn: document.getElementById('add-step-btn'), // Mapping button for adding steps
     layersListContainer: document.getElementById('layers-list'), // Mapping container for step cards
 
     // Actions

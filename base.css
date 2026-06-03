@@ -48,6 +48,29 @@ body {
     background-color: var(--bg-dark);
 }
 
+/* Layout Maximizing Toggles */
+.app-container.max-viewer-active {
+    grid-template-columns: 1fr !important;
+}
+.app-container.max-viewer-active .sidebar,
+.app-container.max-viewer-active .sidebar-resizer {
+    display: none !important;
+}
+.app-container.max-viewer-active .main-workspace {
+    grid-column: 1 / -1 !important;
+}
+
+.app-container.max-editor-active {
+    grid-template-columns: 1fr !important;
+}
+.app-container.max-editor-active .main-workspace,
+.app-container.max-editor-active .sidebar-resizer {
+    display: none !important;
+}
+.app-container.max-editor-active .sidebar {
+    grid-column: 1 / -1 !important;
+}
+
 /* Resize Handle */
 .sidebar-resizer {
     width: 6px;

@@ -148,13 +148,9 @@ function setupEventListeners() {
             const canvasX = (mouseX - state.transform.x) / currentScale;
             const canvasY = (mouseY - state.transform.y) / currentScale;
             
-            // Calculate new scale
-            let newScale;
-            if (e.deltaY < 0) {
-                newScale = currentScale * (1 + zoomIntensity);
-            } else {
-                newScale = currentScale / (1 + zoomIntensity);
-            }
+            // Calculate new scale smoothly for both mouse wheels and trackpads
+            const zoomFactor = Math.exp(-e.deltaY * 0.003);
+            let newScale = currentScale * zoomFactor;
             
             // Bound scale between 10% and 1500%
             newScale = Math.max(0.1, Math.min(newScale, 15.0));
@@ -168,6 +164,7 @@ function setupEventListeners() {
         }, { passive: false });
         
         container.addEventListener('mousemove', (e) => {
+            if (state.isDraggingDivider) return;
             const rect = elements.canvasWrapper ? elements.canvasWrapper.getBoundingClientRect() : { left: 0, top: 0, width: 1 };
             state.mouseWrapperX = e.clientX - rect.left;
             state.mouseWrapperY = e.clientY - rect.top;
@@ -197,53 +194,91 @@ function setupEventListeners() {
         });
 
         // Touch event handlers for mobile panning & pinch-zoom
-        let touchStartDist = 0;
-        let touchStartScale = 1;
+        let touchLastDist = 0;
+        let touchLastCenter = { x: 0, y: 0 };
         let isPinching = false;
         
         container.addEventListener('touchstart', (e) => {
             if (e.touches.length === 1) {
-                state.isDragging = true;
+                if (e.target.closest('#split-divider')) {
+                    state.isDraggingDivider = true;
+                    return;
+                }
                 const touch = e.touches[0];
+                const rect = elements.canvasWrapper ? elements.canvasWrapper.getBoundingClientRect() : { left: 0, top: 0, width: 1 };
+                state.mouseWrapperX = touch.clientX - rect.left;
+                state.mouseWrapperY = touch.clientY - rect.top;
+                
+                state.isDragging = true;
                 state.startPan = { x: touch.clientX - state.transform.x, y: touch.clientY - state.transform.y };
                 isPinching = false;
             } else if (e.touches.length === 2) {
                 state.isDragging = false;
+                state.isDraggingDivider = false;
                 isPinching = true;
                 const t1 = e.touches[0];
                 const t2 = e.touches[1];
-                touchStartDist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
-                touchStartScale = state.transform.scale || 1.0;
+                touchLastDist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+                
+                const rect = elements.canvasWrapper ? elements.canvasWrapper.getBoundingClientRect() : { left: 0, top: 0 };
+                touchLastCenter = {
+                    x: (t1.clientX + t2.clientX) / 2 - rect.left,
+                    y: (t1.clientY + t2.clientY) / 2 - rect.top
+                };
             }
         }, { passive: true });
         
         container.addEventListener('touchmove', (e) => {
             if (state.isDragging && e.touches.length === 1) {
                 const touch = e.touches[0];
+                const rect = elements.canvasWrapper ? elements.canvasWrapper.getBoundingClientRect() : { left: 0, top: 0, width: 1 };
+                state.mouseWrapperX = touch.clientX - rect.left;
+                state.mouseWrapperY = touch.clientY - rect.top;
+                
                 state.transform.x = touch.clientX - state.startPan.x;
                 state.transform.y = touch.clientY - state.startPan.y;
                 updateCanvasesTransform();
+                
+                if (state.originalWidth > 0) {
+                    const canvasLeft = Math.round(state.transform.x);
+                    const currentScale = Math.max(0.1, state.transform.scale || 1.0);
+                    const relativeX = (state.mouseWrapperX - canvasLeft) / currentScale;
+                    const relativeY = (state.mouseWrapperY - state.transform.y) / currentScale;
+                    if (elements.originalCanvas && relativeX >= 0 && relativeX < elements.originalCanvas.width && relativeY >= 0 && relativeY < elements.originalCanvas.height) {
+                        updatePixelInspector(Math.floor(relativeX), Math.floor(relativeY));
+                    } else {
+                        clearPixelInspector();
+                    }
+                }
             } else if (isPinching && e.touches.length === 2) {
                 e.preventDefault(); // prevent default zoom/scroll
                 const t1 = e.touches[0];
                 const t2 = e.touches[1];
                 const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
-                if (touchStartDist > 0) {
-                    const factor = dist / touchStartDist;
-                    let newScale = touchStartScale * factor;
+                if (touchLastDist > 0) {
+                    const factor = dist / touchLastDist;
+                    const currentScale = Math.max(0.1, state.transform.scale || 1.0);
+                    let newScale = currentScale * factor;
                     newScale = Math.max(0.1, Math.min(newScale, 15.0));
                     
                     const rect = elements.canvasWrapper ? elements.canvasWrapper.getBoundingClientRect() : { left: 0, top: 0 };
                     const centerX = (t1.clientX + t2.clientX) / 2 - rect.left;
                     const centerY = (t1.clientY + t2.clientY) / 2 - rect.top;
                     
-                    const currentScale = Math.max(0.1, state.transform.scale || 1.0);
+                    const deltaX = centerX - touchLastCenter.x;
+                    const deltaY = centerY - touchLastCenter.y;
+                    state.transform.x += deltaX;
+                    state.transform.y += deltaY;
+                    
                     const canvasX = (centerX - state.transform.x) / currentScale;
                     const canvasY = (centerY - state.transform.y) / currentScale;
                     
                     state.transform.x = centerX - canvasX * newScale;
                     state.transform.y = centerY - canvasY * newScale;
                     state.transform.scale = newScale;
+                    
+                    touchLastDist = dist;
+                    touchLastCenter = { x: centerX, y: centerY };
                     updateCanvasesTransform();
                 }
             }
@@ -281,6 +316,20 @@ function setupEventListeners() {
         }
     });
     
+    window.addEventListener('touchmove', (e) => {
+        if (state.isDraggingDivider && e.touches.length === 1) {
+            const rect = elements.canvasWrapper ? elements.canvasWrapper.getBoundingClientRect() : { left: 0, top: 0, width: 1 };
+            let x = e.touches[0].clientX - rect.left;
+            x = Math.max(0, Math.min(x, rect.width));
+            state.compPosition = (x / rect.width) * 100;
+            
+            if (elements.compSlider) elements.compSlider.value = Math.round(state.compPosition);
+            if (elements.compSliderVal) elements.compSliderVal.textContent = `${Math.round(state.compPosition)}%`;
+            updateComparisonView();
+            if (e.cancelable) e.preventDefault();
+        }
+    }, { passive: false });
+    
     window.addEventListener('mouseup', () => {
         state.isDragging = false;
         state.isDraggingDivider = false;
@@ -303,7 +352,7 @@ function setupEventListeners() {
         
         // Adjust split slider UI configs depending on active modes
         if (state.comparisonMode === "Split Slider") {
-            elements.compSliderGroup.style.display = "block";
+            elements.compSliderGroup.style.display = "flex";
             elements.compSliderLabel.textContent = "Split Position";
             elements.compSlider.min = "0";
             elements.compSlider.max = "100";
@@ -311,7 +360,7 @@ function setupEventListeners() {
             elements.compSlider.value = Math.round(state.compPosition);
             elements.compSliderVal.textContent = `${Math.round(state.compPosition)}%`;
         } else if (state.comparisonMode === "Overlay Opacity") {
-            elements.compSliderGroup.style.display = "block";
+            elements.compSliderGroup.style.display = "flex";
             elements.compSliderLabel.textContent = "Opacity Value";
             elements.compSlider.min = "0";
             elements.compSlider.max = "100";
@@ -319,7 +368,7 @@ function setupEventListeners() {
             elements.compSlider.value = Math.round(state.compPosition);
             elements.compSliderVal.textContent = `${Math.round(state.compPosition)}%`;
         } else if (state.comparisonMode === "X-Ray Lens") {
-            elements.compSliderGroup.style.display = "block";
+            elements.compSliderGroup.style.display = "flex";
             elements.compSliderLabel.textContent = "Spotlight Diameter";
             elements.compSlider.min = "5";
             elements.compSlider.max = "100";
@@ -406,7 +455,7 @@ function setupEventListeners() {
 
 
     // --- Dynamic flat step additions ---
-    const addStepBtn = document.getElementById('add-step-btn');
+    const addStepBtn = elements.addLayerBtn;
     if (addStepBtn) {
         addStepBtn.addEventListener('click', () => {
             const select = document.getElementById('select-add-step');
@@ -693,6 +742,7 @@ function setupEventListeners() {
                     elements.compModeSelect.dispatchEvent(new Event('change'));
                 }
             } else if (e.key === '[' || e.key === ']') {
+                if (state.isDraggingDivider) return;
                 e.preventDefault();
                 let targetPos = e.key === '[' ? 0 : 100;
                 if (state.comparisonMode === "X-Ray Lens" && targetPos < 5) {
@@ -720,6 +770,13 @@ function setupEventListeners() {
     
     // Initialize sidebar resizing behavior
     setupSidebarResizer();
+    
+    // Add window resize auto-fit to maintain responsive layout
+    window.addEventListener('resize', () => {
+        requestAnimationFrame(() => {
+            autoFitImage();
+        });
+    });
 }
 
 function handleUploadedFile(file) {
@@ -808,16 +865,8 @@ function processImage() {
     let baselineToSend = state.comparisonBaseline;
     
 
-    // Resolve "previous" references to absolute step IDs before sending payload
+    // We send a clone of the pipeline as-is. Caching and "previous" resolutions are handled by Flask backend.
     const clonedPipeline = JSON.parse(JSON.stringify(pipelineToSend));
-    clonedPipeline.forEach((step, idx) => {
-        if (step.input_source === "previous") {
-            step.input_source = (idx === 0) ? "original" : clonedPipeline[idx - 1].id;
-        }
-        if (step.blend_source === "previous") {
-            step.blend_source = (idx === 0) ? "original" : clonedPipeline[idx - 1].id;
-        }
-    });
 
     const abortController = new AbortController();
     currentAbortController = abortController;
@@ -904,10 +953,8 @@ function processImage() {
             
             Promise.all([loadProcImg, loadProc]).then(([procImg, origImg]) => {
                 // Cache baseline dimensions for correct auto-fitting and coordinate checks (Bug 8)
-                state.originalWidth = origImg.width;
-                state.originalHeight = origImg.height;
                 if (elements.statusDim) {
-                    elements.statusDim.textContent = `${state.originalWidth} × ${state.originalHeight} px`;
+                    elements.statusDim.textContent = `${origImg.width} × ${origImg.height} px`;
                 }
 
                 // Draw original canvas ONLY if size changes or we loaded a non-static baseline

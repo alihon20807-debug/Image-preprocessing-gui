@@ -91,6 +91,12 @@ def process():
             # Make a deep copy of the pipeline parameters to prevent mutating incoming request data (Bug 11)
             pipeline = copy.deepcopy(pipeline)
             
+            # Resolve "previous" references to absolute step IDs in the local copy before validation & execution
+            for idx, step in enumerate(pipeline):
+                for input_key in ['input_source', 'blend_source']:
+                    if step.get(input_key) == 'previous':
+                        step[input_key] = "original" if idx == 0 else pipeline[idx - 1]['id']
+            
             # Step 1 & 2: Validate parameters & DAG structure FIRST (Bug 1)
             from schema import verify_pipeline_dag, validate_step_params
             for step in pipeline:
@@ -245,7 +251,7 @@ def process():
                 _pipeline_cache_matrices[step_id] = out_img
                 
             # Save the executed pipeline configuration
-            _last_pipeline_state = copy.deepcopy(pipeline)
+            _last_pipeline_state = copy.deepcopy(params['pipeline'])
             
             # Resolve the final processed image
             if pipeline:
